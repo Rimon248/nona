@@ -15,6 +15,7 @@ import (
 	"golang.org/x/term"
 	"nona.example/control-api/internal/auth"
 	"nona.example/control-api/internal/configbundle"
+	"nona.example/control-api/internal/database"
 )
 
 func usage() {
@@ -29,7 +30,7 @@ func openService() (*pgxpool.Pool, *auth.Service) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, url)
+	pool, err := database.Open(ctx, url)
 	if err != nil {
 		log.Fatal("invalid database configuration")
 	}

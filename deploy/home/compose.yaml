@@ -1,0 +1,62 @@
+name: nona
+
+services:
+  api:
+    build: .
+    image: nona-control-api:local
+    restart: unless-stopped
+    environment:
+      NONA_LISTEN_ADDR: 0.0.0.0:8080
+      NONA_DOCKER_UNPUBLISHED: "1"
+      NONA_DATABASE_URL: postgres://nona@db:5432/nona?sslmode=disable
+      NONA_DATABASE_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    networks:
+      proxy:
+        aliases:
+          - nona-api
+      private: {}
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  db:
+    image: postgres:18.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nona
+      POSTGRES_DB: nona
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - db_data:/var/lib/postgresql
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nona -d nona"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+
+volumes:
+  db_data:
+
+networks:
+  proxy:
+    external: true
+  private:
+    internal: true

@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"nona.example/control-api/internal/auth"
+	"nona.example/control-api/internal/database"
 )
 
 type loginLimiter struct {
@@ -288,12 +288,13 @@ func main() {
 	if databaseURL := os.Getenv("NONA_DATABASE_URL"); databaseURL != "" {
 		host, _, err := net.SplitHostPort(addr)
 		ip := net.ParseIP(host)
-		if err != nil || (host != "localhost" && (ip == nil || !ip.IsLoopback())) {
-			log.Fatal("account API must listen on loopback behind an HTTPS reverse proxy")
+		containerPrivateListen := host == "0.0.0.0" && os.Getenv("NONA_DOCKER_UNPUBLISHED") == "1"
+		if err != nil || (!containerPrivateListen && host != "localhost" && (ip == nil || !ip.IsLoopback())) {
+			log.Fatal("account API must listen on loopback or an explicitly unpublished Docker network behind HTTPS")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		pool, err := pgxpool.New(ctx, databaseURL)
+		pool, err := database.Open(ctx, databaseURL)
 		if err != nil {
 			log.Fatal("invalid database configuration")
 		}

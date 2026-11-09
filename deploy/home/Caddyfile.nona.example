@@ -1,9 +1,10 @@
-# Add this site block to the existing Caddy configuration on the home server.
-# Keep the /v1 prefix: the Go API expects it.
-# The admin panel is intentionally not exposed until it has operator authentication.
+# Add this site block to /srv/docker/caddy/Caddyfile after public DNS resolves.
+# Caddy must be on the existing external Docker network named "proxy".
+# Public TLS is required for Android; do not use "tls internal" for this site.
+# The admin panel is not exposed until it has operator authentication.
 nona.server.basketref.ru {
 	handle /v1/* {
-		reverse_proxy 127.0.0.1:8080
+		reverse_proxy nona-api:8080
 	}
 
 	handle {
