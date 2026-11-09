@@ -1,0 +1,32 @@
+{
+  "clientId": "nona-panel",
+  "name": "Панель Ноны",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "standardFlowEnabled": true,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": false,
+  "redirectUris": [
+    "https://nona.server.basketref.ru/oauth2/callback"
+  ],
+  "webOrigins": [
+    "https://nona.server.basketref.ru"
+  ],
+  "attributes": {
+    "pkce.code.challenge.method": "S256"
+  },
+  "protocolMappers": [
+    {
+      "name": "nona-panel-audience",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-audience-mapper",
+      "consentRequired": false,
+      "config": {
+        "included.client.audience": "nona-panel",
+        "id.token.claim": "true",
+        "access.token.claim": "true"
+      }
+    }
+  ]
+}

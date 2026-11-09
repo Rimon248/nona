@@ -1,0 +1,9 @@
+{
+  "realm": "nona",
+  "displayName": "Виртуальный Помощник Нона",
+  "enabled": true,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "sslRequired": "external"
+}

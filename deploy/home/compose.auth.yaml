@@ -1,0 +1,49 @@
+# Apply with: docker compose -f compose.yaml -f compose.auth.yaml up -d
+# Keep both secret files outside Git. This service is not started by compose.yaml alone.
+services:
+  panel-auth:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5
+    restart: unless-stopped
+    command:
+      - --provider=keycloak-oidc
+      - --http-address=0.0.0.0:4180
+      - --client-id=nona-panel
+      - --client-secret-file=/run/secrets/panel_client_secret
+      - --cookie-secret-file=/run/secrets/panel_cookie_secret
+      - --oidc-issuer-url=https://auth.basketstat-online.ru/realms/nona
+      - --redirect-url=https://nona.server.basketref.ru/oauth2/callback
+      - --code-challenge-method=S256
+      - --allowed-role=nona-operator
+      - --email-domain=*
+      - --cookie-name=__Host-nona_panel
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --cookie-expire=8h
+      - --cookie-refresh=15m
+      - --upstream=static://200
+      - --skip-provider-button=true
+      - --reverse-proxy=true
+      - --pass-access-token=false
+      - --pass-authorization-header=false
+      - --pass-basic-auth=false
+      - --pass-user-headers=false
+    secrets:
+      - panel_client_secret
+      - panel_cookie_secret
+    networks:
+      proxy:
+        aliases:
+          - nona-panel-auth
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  panel_client_secret:
+    file: ./secrets/panel_client_secret
+  panel_cookie_secret:
+    file: ./secrets/panel_cookie_secret

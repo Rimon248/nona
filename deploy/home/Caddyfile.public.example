@@ -1,0 +1,26 @@
+# Replace the current local-only Nona site block after Keycloak, auth proxy,
+# public DNS and trusted TLS are ready. Do not append a second block for this host.
+nona.server.basketref.ru {
+	encode zstd gzip
+
+	handle /v1/* {
+		reverse_proxy nona-api:8080
+	}
+
+	handle /oauth2/* {
+		reverse_proxy nona-panel-auth:4180
+	}
+
+	@panel path /admin /admin/*
+	handle @panel {
+		reverse_proxy nona-panel-auth:4180
+	}
+
+	handle / {
+		redir /admin/ 302
+	}
+
+	handle {
+		respond 404
+	}
+}

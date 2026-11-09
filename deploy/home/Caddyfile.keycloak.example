@@ -1,0 +1,10 @@
+# Replace only the existing auth.basketstat-online.ru block with this one.
+# It keeps BasketStat routes and adds the Nona realm; Keycloak admin stays closed.
+auth.basketstat-online.ru {
+    encode zstd gzip
+    route {
+        @public path /realms/basketstat /realms/basketstat/* /realms/nona /realms/nona/* /resources/* /.well-known/*
+        reverse_proxy @public keycloak:8080
+        respond 404
+    }
+}
