@@ -1,8 +1,10 @@
-# Add this site block to /srv/docker/caddy/Caddyfile after public DNS resolves.
+# Add this site block to /srv/docker/caddy/Caddyfile for the local service domain.
 # Caddy must be on the existing external Docker network named "proxy".
-# Public TLS is required for Android; do not use "tls internal" for this site.
+# Existing *.server.basketref.ru sites use Caddy's internal CA.
 # The admin panel is not exposed until it has operator authentication.
 nona.server.basketref.ru {
+	tls internal
+
 	handle /v1/* {
 		reverse_proxy nona-api:8080
 	}
