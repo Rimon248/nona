@@ -1,0 +1,6 @@
+# Enable only after sql/004_oidc_accounts.sql is applied and the client uses OIDC.
+services:
+  api:
+    environment:
+      NONA_OIDC_ISSUER: https://nona.server.basketref.ru/auth/realms/nona
+      NONA_OIDC_JWKS_URL: http://nona-keycloak:8080/auth/realms/nona/protocol/openid-connect/certs

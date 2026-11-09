@@ -3,6 +3,11 @@
 nona.server.basketref.ru {
 	encode zstd gzip
 
+	@identityPublic path /auth/realms/nona /auth/realms/nona/* /auth/resources/* /auth/.well-known/*
+	handle @identityPublic {
+		reverse_proxy nona-keycloak:8080
+	}
+
 	handle /v1/* {
 		reverse_proxy nona-api:8080
 	}

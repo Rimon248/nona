@@ -18,7 +18,7 @@ output_dir=$(CDPATH= cd -- "$output_dir" && pwd)
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$output_dir/control-api" ./cmd/api
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$output_dir/admin" ./cmd/admin
 )
-cp "$script_dir/compose.yaml" "$script_dir/compose.auth.yaml" "$script_dir/Dockerfile" "$script_dir/Caddyfile.nona.example" "$script_dir/Caddyfile.public.example" "$script_dir/Caddyfile.keycloak.example" "$output_dir/"
+cp "$script_dir/compose.yaml" "$script_dir/compose.identity.yaml" "$script_dir/compose.auth.yaml" "$script_dir/compose.oidc.yaml" "$script_dir/start-keycloak.sh" "$script_dir/Dockerfile" "$script_dir/Caddyfile.nona.example" "$script_dir/Caddyfile.identity-local.example" "$script_dir/Caddyfile.public.example" "$output_dir/"
 cp "$repo_root"/services/control-api/sql/*.sql "$output_dir/sql/"
 cp "$script_dir"/keycloak/*.json "$output_dir/keycloak/"
 chmod 0755 "$output_dir/control-api" "$output_dir/admin"

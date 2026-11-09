@@ -1,0 +1,17 @@
+# Local TLS route used before public DNS and trusted TLS are ready.
+nona.server.basketref.ru {
+	tls internal
+
+	@identityPublic path /auth/realms/nona /auth/realms/nona/* /auth/resources/* /auth/.well-known/*
+	handle @identityPublic {
+		reverse_proxy nona-keycloak:8080
+	}
+
+	handle /v1/* {
+		reverse_proxy nona-api:8080
+	}
+
+	handle {
+		respond 404
+	}
+}

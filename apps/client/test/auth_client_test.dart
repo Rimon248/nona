@@ -19,6 +19,33 @@ class MemorySecureStore implements SecureStringStore {
   Future<void> delete(String key) async => values.remove(key);
 }
 
+class FakeOidcSession implements OidcSession {
+  bool signedIn = false;
+  bool revoked = false;
+  int refreshes = 0;
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  bool get hasUser => signedIn;
+  @override
+  Future<bool> signIn() async {
+    signedIn = true;
+    return true;
+  }
+
+  @override
+  Future<String?> accessToken({bool forceRefresh = false}) async {
+    if (forceRefresh) refreshes++;
+    return signedIn ? 'keycloak-access' : null;
+  }
+
+  @override
+  Future<void> revokeRefreshToken() async => revoked = true;
+  @override
+  Future<void> forgetUser() async => signedIn = false;
+}
+
 String tokenResponse(String access, String refresh) => jsonEncode({
   'account_id': 'account-a',
   'access_token': access,
@@ -28,6 +55,51 @@ String tokenResponse(String access, String refresh) => jsonEncode({
 });
 
 void main() {
+  test(
+    'Keycloak login uses its bearer token and local account mapping',
+    () async {
+      final oidc = FakeOidcSession();
+      final store = MemorySecureStore();
+      final paths = <String>[];
+      final auth = AuthClient(
+        baseUri: Uri.parse('https://nona.example.invalid'),
+        secureStore: store,
+        oidcSession: oidc,
+        httpClient: MockClient((request) async {
+          paths.add(request.url.path);
+          expect(request.headers['authorization'], 'Bearer keycloak-access');
+          if (request.url.path == '/v1/account') {
+            return http.Response(
+              '{"account_id":"account-k","username":"roman","provider":"keycloak"}',
+              200,
+            );
+          }
+          if (request.url.path == '/v1/devices' && request.method == 'GET') {
+            return http.Response('[]', 200);
+          }
+          if (request.url.path == '/v1/devices' && request.method == 'POST') {
+            final key = jsonDecode(request.body)['public_key'];
+            return http.Response(
+              jsonEncode({'id': 'device-k', 'public_key': key}),
+              201,
+            );
+          }
+          return http.Response('', 404);
+        }),
+      );
+      expect(await auth.restore(), isFalse);
+      await auth.loginWithKeycloak();
+      expect(auth.accountId, 'account-k');
+      expect(auth.username, 'roman');
+      expect(await auth.ensureDeviceRegistered('Android'), 'device-k');
+      expect(store.values.containsKey('nona.device_seed.v1.account-k'), isTrue);
+      expect(paths, isNot(contains('/v1/sessions')));
+      await auth.logout();
+      expect(oidc.revoked, isTrue);
+      expect(auth.signedIn, isFalse);
+    },
+  );
+
   test('rejects a non-HTTPS account server', () {
     expect(
       () => AuthClient(

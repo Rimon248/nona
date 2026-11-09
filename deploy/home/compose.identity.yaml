@@ -1,0 +1,67 @@
+# Separate Keycloak and database for Nona. No host ports are published.
+services:
+  identity-db:
+    image: postgres:18.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nona_keycloak
+      POSTGRES_DB: nona_keycloak
+      POSTGRES_PASSWORD_FILE: /run/secrets/identity_db_password
+    secrets:
+      - identity_db_password
+    volumes:
+      - identity_db_data:/var/lib/postgresql
+    networks:
+      - identity_private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nona_keycloak -d nona_keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  identity:
+    image: quay.io/keycloak/keycloak:26.8.2
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/opt/nona/start-keycloak.sh"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://identity-db:5432/nona_keycloak
+      KC_DB_USERNAME: nona_keycloak
+      KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-nona
+      KC_HOSTNAME: https://nona.server.basketref.ru/auth
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      JAVA_OPTS_KC_HEAP: -XX:MaxRAMPercentage=65
+    secrets:
+      - identity_db_password
+      - identity_bootstrap_password
+    volumes:
+      - ./start-keycloak.sh:/opt/nona/start-keycloak.sh:ro
+      - ./keycloak/realm.json:/opt/keycloak/data/import/nona-realm.json:ro
+    networks:
+      proxy:
+        aliases:
+          - nona-keycloak
+      identity_private: {}
+    depends_on:
+      identity-db:
+        condition: service_healthy
+    mem_limit: 1536m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  identity_db_password:
+    file: ./secrets/identity_db_password
+  identity_bootstrap_password:
+    file: ./secrets/identity_bootstrap_password
+
+volumes:
+  identity_db_data:
+
+networks:
+  identity_private:
+    internal: true

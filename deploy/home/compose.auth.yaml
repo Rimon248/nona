@@ -10,7 +10,7 @@ services:
       - --client-id=nona-panel
       - --client-secret-file=/run/secrets/panel_client_secret
       - --cookie-secret-file=/run/secrets/panel_cookie_secret
-      - --oidc-issuer-url=https://auth.basketstat-online.ru/realms/nona
+      - --oidc-issuer-url=https://nona.server.basketref.ru/auth/realms/nona
       - --redirect-url=https://nona.server.basketref.ru/oauth2/callback
       - --code-challenge-method=S256
       - --allowed-role=nona-operator

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:oidc/oidc.dart';
+import 'package:oidc_default_store/oidc_default_store.dart';
 
 import 'android_app_routing_screen.dart';
 import 'auth_client.dart';
@@ -39,13 +41,16 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const _apiBaseUrl = String.fromEnvironment('NONA_API_BASE_URL');
+  static const _oidcIssuer = String.fromEnvironment(
+    'NONA_OIDC_ISSUER',
+    defaultValue: 'https://nona.server.basketref.ru/auth/realms/nona',
+  );
   static const _configKeyId = String.fromEnvironment('NONA_CONFIG_KEY_ID');
   static const _configVerifyKey = String.fromEnvironment(
     'NONA_CONFIG_VERIFY_KEY_B64',
   );
-  final _username = TextEditingController();
-  final _password = TextEditingController();
   http.Client? _http;
+  OidcUserManager? _oidc;
   AuthClient? _auth;
   ConfigurationVault? _vault;
   String? _deviceId;
@@ -58,14 +63,40 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     if (_apiBaseUrl.isEmpty) return;
     try {
+      final issuer = Uri.parse(_oidcIssuer);
+      if (issuer.scheme != 'https' ||
+          issuer.host != Uri.parse(_apiBaseUrl).host ||
+          issuer.hasQuery ||
+          issuer.hasFragment) {
+        throw const FormatException('Invalid Keycloak issuer');
+      }
+      _oidc = OidcUserManager.lazy(
+        id: 'nona',
+        discoveryDocumentUri: issuer.replace(
+          path: '${issuer.path}/.well-known/openid-configuration',
+        ),
+        clientCredentials: const OidcClientAuthentication.none(
+          clientId: 'nona-client',
+        ),
+        store: OidcDefaultStore(
+          secureStorageInstance: OidcDefaultStore.createHardenedSecureStorage(),
+        ),
+        settings: OidcUserManagerSettings(
+          scope: const ['openid', 'profile', 'email'],
+          redirectUri: defaultTargetPlatform == TargetPlatform.windows
+              ? Uri.parse('http://127.0.0.1:0')
+              : Uri.parse('ru.basketref.nona://oauth2redirect'),
+        ),
+      );
       _http = http.Client();
       _auth = AuthClient(
         baseUri: Uri.parse(_apiBaseUrl),
         httpClient: _http!,
         secureStore: PlatformSecureStringStore(),
+        oidcSession: KeycloakSession(_oidc!),
       );
     } catch (_) {
-      _message = 'Некорректный HTTPS-адрес сервера аккаунтов';
+      _message = 'Некорректный HTTPS-адрес входа';
       return;
     }
     if (_configKeyId.isNotEmpty && _configVerifyKey.isNotEmpty) {
@@ -88,8 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _username.dispose();
-    _password.dispose();
+    _oidc?.dispose();
     _http?.close();
     super.dispose();
   }
@@ -187,15 +217,13 @@ class _HomeScreenState extends State<HomeScreen> {
       _message = null;
     });
     try {
-      await auth.login(_username.text.trim(), _password.text);
-      _password.clear();
+      await auth.loginWithKeycloak();
       await _registerDevice(auth);
     } on AuthException catch (error) {
       if (mounted) {
         setState(
           () => _message = switch (error.message) {
-            'Invalid credentials' => 'Неверный логин или пароль',
-            'Too many attempts' => 'Слишком много попыток. Попробуйте позже',
+            'Sign in cancelled' => 'Вход отменён',
             _ => 'Не удалось войти. Проверьте соединение с сервером',
           },
         );
@@ -263,26 +291,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: const Text('Выйти'),
               ),
             ] else ...[
-              TextField(
-                controller: _username,
-                enabled: !_busy,
-                autofillHints: const [AutofillHints.username],
-                decoration: const InputDecoration(labelText: 'Логин'),
-              ),
-              TextField(
-                controller: _password,
-                enabled: !_busy,
-                obscureText: true,
-                autofillHints: const [AutofillHints.password],
-                decoration: const InputDecoration(labelText: 'Пароль'),
-                onSubmitted: (_) {
-                  if (!_busy) _login();
-                },
-              ),
+              const Text('Для входа откроется защищённая страница Ноны.'),
               const SizedBox(height: 16),
               FilledButton(
                 onPressed: _busy ? null : _login,
-                child: const Text('Войти'),
+                child: const Text('Войти через Нону'),
               ),
             ],
             if (_busy) ...[

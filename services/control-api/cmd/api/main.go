@@ -15,6 +15,7 @@ import (
 
 	"nona.example/control-api/internal/auth"
 	"nona.example/control-api/internal/database"
+	"nona.example/control-api/internal/oidc"
 )
 
 type loginLimiter struct {
@@ -84,6 +85,10 @@ func bearerToken(r *http.Request) string {
 }
 
 func handler(service *auth.Service) http.Handler {
+	return handlerWithOIDC(service, nil)
+}
+
+func handlerWithOIDC(service *auth.Service, verifier *oidc.Verifier) http.Handler {
 	mux := http.NewServeMux()
 	limiter := &loginLimiter{}
 	loginSlots := make(chan struct{}, 2)
@@ -108,6 +113,10 @@ func handler(service *auth.Service) http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 	})
 	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
+		provider := "local"
+		if verifier != nil {
+			provider = "keycloak"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -115,76 +124,92 @@ func handler(service *auth.Service) http.Handler {
 			"api_version":          1,
 			"provisioning_enabled": false,
 			"accounts_enabled":     service != nil,
+			"authentication":       provider,
 		})
 	})
 	if service != nil {
-		mux.HandleFunc("POST /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-store")
-			var input struct {
-				Username string `json:"username"`
-				Password string `json:"password"`
-			}
-			if !decodeJSON(w, r, &input) {
-				return
-			}
-			if !limiter.allow(input.Username, time.Now()) {
-				http.Error(w, "too many attempts", http.StatusTooManyRequests)
-				return
-			}
-			select {
-			case loginSlots <- struct{}{}:
-				defer func() { <-loginSlots }()
-			default:
-				http.Error(w, "server busy", http.StatusTooManyRequests)
-				return
-			}
-			tokens, err := service.Login(r.Context(), input.Username, input.Password, time.Now().UTC())
-			if errors.Is(err, auth.ErrInvalidCredentials) {
-				http.Error(w, "invalid credentials", http.StatusUnauthorized)
-				return
-			}
-			if err != nil {
-				http.Error(w, "server error", http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(tokens)
-		})
-		mux.HandleFunc("POST /v1/sessions/refresh", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-store")
-			var input struct {
-				RefreshToken string `json:"refresh_token"`
-			}
-			if !decodeJSON(w, r, &input) {
-				return
-			}
-			tokens, err := service.Refresh(r.Context(), input.RefreshToken, time.Now().UTC())
-			if errors.Is(err, auth.ErrInvalidCredentials) {
-				http.Error(w, "invalid credentials", http.StatusUnauthorized)
-				return
-			}
-			if err != nil {
-				http.Error(w, "server error", http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(tokens)
-		})
-		mux.HandleFunc("DELETE /v1/sessions/current", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-store")
-			err := service.Logout(r.Context(), bearerToken(r), time.Now().UTC())
-			if errors.Is(err, auth.ErrInvalidCredentials) {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			if err != nil {
-				http.Error(w, "server error", http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		})
+		if verifier == nil {
+			mux.HandleFunc("POST /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				var input struct {
+					Username string `json:"username"`
+					Password string `json:"password"`
+				}
+				if !decodeJSON(w, r, &input) {
+					return
+				}
+				if !limiter.allow(input.Username, time.Now()) {
+					http.Error(w, "too many attempts", http.StatusTooManyRequests)
+					return
+				}
+				select {
+				case loginSlots <- struct{}{}:
+					defer func() { <-loginSlots }()
+				default:
+					http.Error(w, "server busy", http.StatusTooManyRequests)
+					return
+				}
+				tokens, err := service.Login(r.Context(), input.Username, input.Password, time.Now().UTC())
+				if errors.Is(err, auth.ErrInvalidCredentials) {
+					http.Error(w, "invalid credentials", http.StatusUnauthorized)
+					return
+				}
+				if err != nil {
+					http.Error(w, "server error", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(tokens)
+			})
+			mux.HandleFunc("POST /v1/sessions/refresh", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				var input struct {
+					RefreshToken string `json:"refresh_token"`
+				}
+				if !decodeJSON(w, r, &input) {
+					return
+				}
+				tokens, err := service.Refresh(r.Context(), input.RefreshToken, time.Now().UTC())
+				if errors.Is(err, auth.ErrInvalidCredentials) {
+					http.Error(w, "invalid credentials", http.StatusUnauthorized)
+					return
+				}
+				if err != nil {
+					http.Error(w, "server error", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(tokens)
+			})
+			mux.HandleFunc("DELETE /v1/sessions/current", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				err := service.Logout(r.Context(), bearerToken(r), time.Now().UTC())
+				if errors.Is(err, auth.ErrInvalidCredentials) {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				if err != nil {
+					http.Error(w, "server error", http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})
+		}
 		currentAccount := func(w http.ResponseWriter, r *http.Request) (string, bool) {
-			session, err := service.Authenticate(r.Context(), bearerToken(r), time.Now().UTC())
+			var session auth.Session
+			var err error
+			if verifier != nil {
+				var identity oidc.Identity
+				identity, err = verifier.Verify(r.Context(), bearerToken(r), time.Now().UTC())
+				if err == nil {
+					session, err = service.AuthenticateOIDC(r.Context(), identity.Subject)
+				}
+				if errors.Is(err, oidc.ErrInvalidToken) {
+					err = auth.ErrInvalidCredentials
+				}
+			} else {
+				session, err = service.Authenticate(r.Context(), bearerToken(r), time.Now().UTC())
+			}
 			if errors.Is(err, auth.ErrInvalidCredentials) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return "", false
@@ -194,6 +219,24 @@ func handler(service *auth.Service) http.Handler {
 				return "", false
 			}
 			return session.AccountID, true
+		}
+		if verifier != nil {
+			mux.HandleFunc("GET /v1/account", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", "no-store")
+				accountID, ok := currentAccount(w, r)
+				if !ok {
+					return
+				}
+				identity, err := verifier.Verify(r.Context(), bearerToken(r), time.Now().UTC())
+				if err != nil {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"account_id": accountID, "username": identity.Username, "provider": "keycloak",
+				})
+			})
 		}
 		mux.HandleFunc("POST /v1/devices", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
@@ -285,6 +328,7 @@ func main() {
 		addr = "127.0.0.1:8080"
 	}
 	var service *auth.Service
+	var verifier *oidc.Verifier
 	if databaseURL := os.Getenv("NONA_DATABASE_URL"); databaseURL != "" {
 		host, _, err := net.SplitHostPort(addr)
 		ip := net.ParseIP(host)
@@ -309,6 +353,18 @@ func main() {
 		if err := service.CheckSchema(ctx); err != nil {
 			log.Fatal("database migration is missing")
 		}
+		if issuer := os.Getenv("NONA_OIDC_ISSUER"); issuer != "" {
+			if !strings.HasPrefix(issuer, "https://") || os.Getenv("NONA_OIDC_JWKS_URL") == "" {
+				log.Fatal("invalid OIDC configuration")
+			}
+			if err := service.CheckOIDCSchema(ctx); err != nil {
+				log.Fatal("OIDC database migration is missing")
+			}
+			verifier = &oidc.Verifier{
+				Issuer: issuer, Audience: "nona-api", ClientID: "nona-client",
+				JWKSURL: os.Getenv("NONA_OIDC_JWKS_URL"), HTTP: &http.Client{Timeout: 3 * time.Second},
+			}
+		}
 		go func() {
 			ticker := time.NewTicker(24 * time.Hour)
 			defer ticker.Stop()
@@ -323,7 +379,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           handler(service),
+		Handler:           handlerWithOIDC(service, verifier),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

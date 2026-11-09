@@ -54,6 +54,46 @@ func NewService(pool *pgxpool.Pool) (*Service, error) {
 	return &Service{pool: pool, dummyHash: dummyHash}, nil
 }
 
+// AuthenticateOIDC links a verified Keycloak subject to one local account.
+// The caller must verify the JWT signature, issuer, audience and client first.
+func (s *Service) AuthenticateOIDC(ctx context.Context, subject string) (Session, error) {
+	if subject == "" || len(subject) > 256 {
+		return Session{}, ErrInvalidCredentials
+	}
+	id, err := newID()
+	if err != nil {
+		return Session{}, err
+	}
+	_, err = s.pool.Exec(ctx, `INSERT INTO accounts (id, username, password_hash, oidc_subject)
+		VALUES ($1, $2, $3, $4) ON CONFLICT (oidc_subject) WHERE oidc_subject IS NOT NULL DO NOTHING`,
+		id, "oidc:"+subject, "oidc-managed", subject)
+	if err != nil {
+		return Session{}, err
+	}
+	var accountID string
+	err = s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE oidc_subject=$1 AND disabled_at IS NULL`, subject).Scan(&accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Session{}, ErrInvalidCredentials
+	}
+	if err != nil {
+		return Session{}, err
+	}
+	return Session{ID: "oidc:" + subject, AccountID: accountID}, nil
+}
+
+func (s *Service) CheckOIDCSchema(ctx context.Context) error {
+	var exists bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+		WHERE table_name='accounts' AND column_name='oidc_subject')`).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("OIDC migration is missing")
+	}
+	return nil
+}
+
 func normalizeUsername(username string) (string, error) {
 	username = strings.ToLower(strings.TrimSpace(username))
 	if !usernamePattern.MatchString(username) {

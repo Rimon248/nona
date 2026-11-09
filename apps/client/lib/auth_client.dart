@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
+import 'package:oidc/oidc.dart';
 
 import 'configuration_vault.dart';
 
@@ -11,6 +12,35 @@ class AuthException implements Exception {
 
   @override
   String toString() => 'AuthException: $message';
+}
+
+abstract class OidcSession {
+  Future<void> initialize();
+  bool get hasUser;
+  Future<bool> signIn();
+  Future<String?> accessToken({bool forceRefresh = false});
+  Future<void> revokeRefreshToken();
+  Future<void> forgetUser();
+}
+
+class KeycloakSession implements OidcSession {
+  KeycloakSession(this.manager);
+  final OidcUserManager manager;
+
+  @override
+  Future<void> initialize() => manager.init();
+  @override
+  bool get hasUser => manager.currentUser != null;
+  @override
+  Future<bool> signIn() async =>
+      await manager.loginAuthorizationCodeFlow() != null;
+  @override
+  Future<String?> accessToken({bool forceRefresh = false}) =>
+      manager.getAccessToken(forceRefresh: forceRefresh);
+  @override
+  Future<void> revokeRefreshToken() => manager.revokeRefreshToken();
+  @override
+  Future<void> forgetUser() => manager.forgetUser();
 }
 
 class SessionTokens {
@@ -71,9 +101,11 @@ class AuthClient {
     required Uri baseUri,
     required http.Client httpClient,
     required SecureStringStore secureStore,
+    OidcSession? oidcSession,
   }) : _baseUri = _validateBaseUri(baseUri),
        _http = httpClient,
-       _store = secureStore;
+       _store = secureStore,
+       _oidc = oidcSession;
 
   static const _refreshKey = 'nona.refresh_token.v1';
   static const _usernameKey = 'nona.username.v1';
@@ -81,12 +113,56 @@ class AuthClient {
   final Uri _baseUri;
   final http.Client _http;
   final SecureStringStore _store;
+  final OidcSession? _oidc;
   SessionTokens? _tokens;
+  String? _oidcAccountId;
+  bool _oidcInitialized = false;
   String? _username;
 
-  bool get signedIn => _tokens != null;
-  String? get accountId => _tokens?.accountId;
+  bool get signedIn =>
+      _oidc == null ? _tokens != null : _oidcAccountId != null && _oidc.hasUser;
+  String? get accountId =>
+      _oidc == null ? _tokens?.accountId : (signedIn ? _oidcAccountId : null);
   String? get username => _username;
+
+  Future<void> _initOidc() async {
+    if (_oidcInitialized) return;
+    await _oidc!.initialize();
+    _oidcInitialized = true;
+  }
+
+  Future<void> _loadOidcAccount() async {
+    final token = await _oidc!.accessToken();
+    if (token == null) throw const AuthException('Sign in required');
+    final (status, body) = await _request(
+      'GET',
+      '/v1/account',
+      accessToken: token,
+    );
+    if (status != 200) {
+      throw const AuthException('Could not load Keycloak account');
+    }
+    try {
+      final account = jsonDecode(body);
+      if (account is! Map<String, dynamic> ||
+          account['account_id'] is! String ||
+          (account['account_id'] as String).isEmpty ||
+          account['username'] is! String) {
+        throw const AuthException('Invalid Keycloak account');
+      }
+      _oidcAccountId = account['account_id'] as String;
+      _username = account['username'] as String;
+    } on FormatException {
+      throw const AuthException('Invalid Keycloak account');
+    }
+  }
+
+  Future<void> loginWithKeycloak() async {
+    if (_oidc == null) throw const AuthException('Keycloak is not configured');
+    await _initOidc();
+    if (!await _oidc.signIn()) throw const AuthException('Sign in cancelled');
+    await _loadOidcAccount();
+  }
 
   static Uri _validateBaseUri(Uri uri) {
     if (uri.scheme != 'https' ||
@@ -154,6 +230,29 @@ class AuthClient {
     Object? body,
     int maxResponseBytes = 8192,
   }) async {
+    if (_oidc != null) {
+      final access = await _oidc.accessToken();
+      if (access == null) throw const AuthException('Sign in required');
+      var response = await _request(
+        method,
+        path,
+        body: body,
+        accessToken: access,
+        maxResponseBytes: maxResponseBytes,
+      );
+      if (response.$1 == 401) {
+        final fresh = await _oidc.accessToken(forceRefresh: true);
+        if (fresh == null) throw const AuthException('Sign in required');
+        response = await _request(
+          method,
+          path,
+          body: body,
+          accessToken: fresh,
+          maxResponseBytes: maxResponseBytes,
+        );
+      }
+      return response;
+    }
     var access = _tokens?.accessToken;
     if (access == null) throw const AuthException('Sign in required');
     var response = await _request(
@@ -199,10 +298,12 @@ class AuthClient {
   /// key. Rechecking the server list makes a lost POST response safe to retry.
   Future<String> ensureDeviceRegistered(String label) async {
     final username = _username?.trim().toLowerCase();
-    if (_tokens == null || username == null || username.isEmpty) {
+    if (!signedIn || username == null || username.isEmpty) {
       throw const AuthException('Sign in required');
     }
-    final keyName = 'nona.device_seed.v1.$username';
+    final keyName = _oidc == null
+        ? 'nona.device_seed.v1.$username'
+        : 'nona.device_seed.v1.$_oidcAccountId';
     final algorithm = X25519();
     var encodedSeed = await _store.read(keyName);
     if (encodedSeed == null) {
@@ -281,6 +382,7 @@ class AuthClient {
   }
 
   Future<void> login(String username, String password) async {
+    if (_oidc != null) throw const AuthException('Use Keycloak sign in');
     final (status, body) = await _request(
       'POST',
       '/v1/sessions',
@@ -296,6 +398,12 @@ class AuthClient {
   /// Returns false when there is no usable saved session. Network errors are
   /// surfaced so the UI can distinguish offline state from signed-out state.
   Future<bool> restore() async {
+    if (_oidc != null) {
+      await _initOidc();
+      if (!_oidc.hasUser) return false;
+      await _loadOidcAccount();
+      return true;
+    }
     final saved = await _store.read(_refreshKey);
     if (saved == null) return false;
     try {
@@ -324,6 +432,14 @@ class AuthClient {
   /// A failed server request keeps the local session for a later retry. The
   /// app must not claim that server-side access was revoked in that case.
   Future<void> logout() async {
+    if (_oidc != null) {
+      await _initOidc();
+      await _oidc.revokeRefreshToken();
+      await _oidc.forgetUser();
+      _oidcAccountId = null;
+      _username = null;
+      return;
+    }
     var tokens = _tokens;
     if (tokens == null) return;
     var (status, _) = await _request(
