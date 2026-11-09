@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"nona.example/control-api/internal/credentials"
 )
 
 const (
@@ -68,7 +70,7 @@ func (p Payload) validate() error {
 	}
 	seen := make(map[string]bool, len(p.Nodes))
 	for _, node := range p.Nodes {
-		if node.ID == "" || seen[node.ID] || node.Provider == "" || node.Endpoint == "" || len(node.Transports) == 0 || node.EncryptedCredentials == "" {
+		if node.ID == "" || seen[node.ID] || node.Provider == "" || node.Endpoint == "" || len(node.Transports) == 0 || credentials.ValidateEnvelope(node.EncryptedCredentials) != nil {
 			return errors.New("invalid or duplicate node")
 		}
 		seen[node.ID] = true

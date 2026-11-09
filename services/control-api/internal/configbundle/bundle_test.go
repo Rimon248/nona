@@ -13,6 +13,16 @@ import (
 
 func fixture(t *testing.T) (Payload, Envelope, ed25519.PublicKey, time.Time) {
 	t.Helper()
+	credentialData, err := os.ReadFile("../../../../test-vectors/credential-box.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var credentialVector struct {
+		Sealed string `json:"sealed"`
+	}
+	if err := json.Unmarshal(credentialData, &credentialVector); err != nil {
+		t.Fatal(err)
+	}
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -20,7 +30,7 @@ func fixture(t *testing.T) (Payload, Envelope, ed25519.PublicKey, time.Time) {
 	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	payload := NewPayload("account-a", "device-a", 2, 1, now.Add(-time.Minute), now.Add(time.Hour), []Node{{
 		ID: "node-a", Provider: "vdsina", Endpoint: "example.invalid",
-		Transports: []string{"vless-reality", "hysteria2"}, EncryptedCredentials: "placeholder-ciphertext",
+		Transports: []string{"vless-reality", "hysteria2"}, EncryptedCredentials: credentialVector.Sealed,
 	}})
 	envelope, err := Sign(payload, "key-1", privateKey)
 	if err != nil {
@@ -34,6 +44,18 @@ func TestVerifyValidBundle(t *testing.T) {
 	got, err := Verify(envelope, map[string]ed25519.PublicKey{"key-1": key}, "account-a", "device-a", 2, now)
 	if err != nil || got.Version != want.Version {
 		t.Fatalf("Verify() = %#v, %v", got, err)
+	}
+}
+
+func TestSignRejectsPlaintextCredentials(t *testing.T) {
+	payload, _, _, _ := fixture(t)
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload.Nodes[0].EncryptedCredentials = "plaintext-password"
+	if _, err := Sign(payload, "key-1", private); err == nil {
+		t.Fatal("signed plaintext credentials")
 	}
 }
 

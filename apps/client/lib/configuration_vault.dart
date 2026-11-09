@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'config_bundle.dart';
+import 'credential_box.dart';
 
 abstract interface class SecureStringStore {
   Future<String?> read(String key);
@@ -84,6 +85,43 @@ class ConfigurationVault {
       minimumVersion: floor,
       now: now,
     );
+  }
+
+  /// Revalidates the saved signature and validity period before opening one
+  /// node's credentials for this registered device. Nothing is persisted in
+  /// decrypted form.
+  Future<List<int>> openNodeCredentials({
+    required String accountId,
+    required String deviceId,
+    required String nodeId,
+    required List<int> deviceSeed,
+    required DateTime now,
+  }) async {
+    final bundle = await load(
+      accountId: accountId,
+      deviceId: deviceId,
+      now: now,
+    );
+    if (bundle == null) {
+      throw const BundleException('No saved configuration');
+    }
+    final nodes = bundle.payload['nodes'] as List;
+    for (final item in nodes) {
+      final node = item as Map<String, dynamic>;
+      if (node['id'] == nodeId) {
+        return const CredentialBox().open(
+          encoded: node['encrypted_credentials'] as String,
+          deviceSeed: deviceSeed,
+          context: CredentialContext(
+            accountId: accountId,
+            deviceId: deviceId,
+            nodeId: nodeId,
+            version: bundle.version,
+          ),
+        );
+      }
+    }
+    throw const BundleException('Node is not in the saved configuration');
   }
 
   Future<void> clear() async {

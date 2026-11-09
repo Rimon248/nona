@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 
+import 'credential_box.dart';
+
 const _domainPrefix = 'NONA-CONFIG-BUNDLE-v1\u0000';
 const _maxPayloadSize = 1 << 20;
 
@@ -152,6 +154,11 @@ class BundleVerifier {
           ) ||
           !nodeIds.add(node['id'] as String)) {
         throw const BundleException('Invalid or duplicate node');
+      }
+      try {
+        CredentialBox.validateEnvelope(node['encrypted_credentials'] as String);
+      } on CredentialException {
+        throw const BundleException('Invalid encrypted credentials');
       }
     }
     return VerifiedBundle(version: version, payload: payload);

@@ -5,10 +5,15 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nona_client/config_bundle.dart';
 
-Future<(String, List<int>)> signedFixture() async {
+Future<(String, List<int>)> signedFixture({
+  String? encryptedCredentials,
+}) async {
   final algorithm = Ed25519();
   final keyPair = await algorithm.newKeyPair();
   final publicKey = await keyPair.extractPublicKey();
+  final credentialVector = jsonDecode(
+    File('../../test-vectors/credential-box.json').readAsStringSync(),
+  ) as Map<String, dynamic>;
   final payload = {
     'schema_version': 1,
     'account_id': 'account-a',
@@ -23,7 +28,8 @@ Future<(String, List<int>)> signedFixture() async {
         'provider': 'vdsina',
         'endpoint': 'example.invalid',
         'transports': ['vless-reality', 'hysteria2'],
-        'encrypted_credentials': 'placeholder-ciphertext',
+        'encrypted_credentials':
+            encryptedCredentials ?? credentialVector['sealed'],
       },
     ],
   };
@@ -69,6 +75,22 @@ void main() {
       now: now,
     );
     expect(verified.version, 2);
+  });
+
+  test('rejects signed plaintext in the credentials field', () async {
+    final (envelope, key) = await signedFixture(
+      encryptedCredentials: 'plaintext-password',
+    );
+    await expectLater(
+      BundleVerifier({'key-1': key}).verify(
+        envelope,
+        accountId: 'account-a',
+        deviceId: 'device-a',
+        minimumVersion: 2,
+        now: now,
+      ),
+      throwsA(isA<BundleException>()),
+    );
   });
 
   test('rejects tampering, wrong device, rollback and expiry', () async {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nona_client/config_bundle.dart';
 import 'package:nona_client/configuration_vault.dart';
@@ -85,6 +86,66 @@ void main() {
         envelope,
         accountId: 'account-a',
         deviceId: 'device-a',
+        now: now,
+      ),
+      throwsA(isA<BundleException>()),
+    );
+  });
+
+  test('opens only credentials from a verified saved node', () async {
+    final credentialVector = jsonDecode(
+      File('../../test-vectors/credential-box.json').readAsStringSync(),
+    ) as Map<String, dynamic>;
+    final payload = jsonDecode(
+      utf8.decode(
+        base64Url.decode(
+          base64Url.normalize(
+            (fixture['envelope'] as Map<String, dynamic>)['payload_b64']
+                as String,
+          ),
+        ),
+      ),
+    ) as Map<String, dynamic>;
+    (payload['nodes'] as List).single['encrypted_credentials'] =
+        credentialVector['sealed'];
+    final keyPair = await Ed25519().newKeyPair();
+    final bytes = utf8.encode(jsonEncode(payload));
+    final signature = await Ed25519().sign([
+      ...utf8.encode('NONA-CONFIG-BUNDLE-v1\u0000'),
+      ...bytes,
+    ], keyPair: keyPair);
+    final signed = jsonEncode({
+      'key_id': 'test-key-2',
+      'payload_b64': base64UrlEncode(bytes).replaceAll('=', ''),
+      'signature': base64UrlEncode(signature.bytes).replaceAll('=', ''),
+    });
+    final vault = ConfigurationVault(
+      MemoryStore(),
+      BundleVerifier({'test-key-2': (await keyPair.extractPublicKey()).bytes}),
+    );
+    await vault.accept(
+      signed,
+      accountId: 'account-a',
+      deviceId: 'device-a',
+      now: now,
+    );
+    final seed = base64Url.decode(
+      base64Url.normalize(credentialVector['device_seed_b64'] as String),
+    );
+    final opened = await vault.openNodeCredentials(
+      accountId: 'account-a',
+      deviceId: 'device-a',
+      nodeId: 'node-a',
+      deviceSeed: seed,
+      now: now,
+    );
+    expect(utf8.decode(opened), credentialVector['plaintext']);
+    await expectLater(
+      vault.openNodeCredentials(
+        accountId: 'account-a',
+        deviceId: 'device-a',
+        nodeId: 'unknown',
+        deviceSeed: seed,
         now: now,
       ),
       throwsA(isA<BundleException>()),
