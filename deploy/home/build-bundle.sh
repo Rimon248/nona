@@ -11,6 +11,7 @@ repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 output_dir=$1
 mkdir -p "$output_dir/sql"
 mkdir -p "$output_dir/keycloak"
+mkdir -p "$output_dir/panel"
 output_dir=$(CDPATH= cd -- "$output_dir" && pwd)
 
 (
@@ -21,5 +22,6 @@ output_dir=$(CDPATH= cd -- "$output_dir" && pwd)
 cp "$script_dir/compose.yaml" "$script_dir/compose.identity.yaml" "$script_dir/compose.auth.yaml" "$script_dir/compose.oidc.yaml" "$script_dir/start-keycloak.sh" "$script_dir/Dockerfile" "$script_dir/Caddyfile.nona.example" "$script_dir/Caddyfile.identity-local.example" "$script_dir/Caddyfile.public.example" "$output_dir/"
 cp "$repo_root"/services/control-api/sql/*.sql "$output_dir/sql/"
 cp "$script_dir"/keycloak/*.json "$output_dir/keycloak/"
+cp -R "$script_dir"/panel/. "$output_dir/panel/"
 chmod 0755 "$output_dir/control-api" "$output_dir/admin"
 echo "Bundle ready: $output_dir"

@@ -1,4 +1,4 @@
-# Apply with: docker compose -f compose.yaml -f compose.auth.yaml up -d
+# Apply with: docker compose -f compose.yaml -f compose.auth.yaml up -d panel-auth
 # Keep both secret files outside Git. This service is not started by compose.yaml alone.
 services:
   panel-auth:
@@ -11,18 +11,25 @@ services:
       - --client-secret-file=/run/secrets/panel_client_secret
       - --cookie-secret-file=/run/secrets/panel_cookie_secret
       - --oidc-issuer-url=https://nona.server.basketref.ru/auth/realms/nona
+      - --skip-oidc-discovery=true
+      - --login-url=https://nona.server.basketref.ru/auth/realms/nona/protocol/openid-connect/auth
+      - --redeem-url=http://nona-keycloak:8080/auth/realms/nona/protocol/openid-connect/token
+      - --oidc-jwks-url=http://nona-keycloak:8080/auth/realms/nona/protocol/openid-connect/certs
+      - --profile-url=http://nona-keycloak:8080/auth/realms/nona/protocol/openid-connect/userinfo
       - --redirect-url=https://nona.server.basketref.ru/oauth2/callback
       - --code-challenge-method=S256
       - --allowed-role=nona-operator
+      - --insecure-oidc-allow-unverified-email=true
       - --email-domain=*
       - --cookie-name=__Host-nona_panel
       - --cookie-secure=true
       - --cookie-samesite=lax
       - --cookie-expire=8h
       - --cookie-refresh=15m
-      - --upstream=static://200
+      - --upstream=file:///srv/panel/#/admin/
       - --skip-provider-button=true
       - --reverse-proxy=true
+      - --trusted-proxy-ip=172.21.0.5/32
       - --pass-access-token=false
       - --pass-authorization-header=false
       - --pass-basic-auth=false
@@ -30,6 +37,8 @@ services:
     secrets:
       - panel_client_secret
       - panel_cookie_secret
+    volumes:
+      - ./panel:/srv/panel:ro
     networks:
       proxy:
         aliases:

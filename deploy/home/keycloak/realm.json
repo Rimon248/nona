@@ -3,6 +3,7 @@
   "displayName": "Виртуальный Помощник Нона",
   "enabled": true,
   "registrationAllowed": false,
+  "verifyEmail": false,
   "resetPasswordAllowed": false,
   "rememberMe": false,
   "bruteForceProtected": true,

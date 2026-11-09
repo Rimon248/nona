@@ -2,6 +2,7 @@
 # public DNS and trusted TLS are ready. Do not append a second block for this host.
 nona.server.basketref.ru {
 	encode zstd gzip
+	redir / /admin/ 302
 
 	@identityPublic path /auth/realms/nona /auth/realms/nona/* /auth/resources/* /auth/.well-known/*
 	handle @identityPublic {
@@ -16,13 +17,18 @@ nona.server.basketref.ru {
 		reverse_proxy nona-panel-auth:4180
 	}
 
-	@panel path /admin /admin/*
-	handle @panel {
+	handle /admin {
+		redir /admin/ 308
+	}
+
+	handle /admin/* {
+		header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+		header X-Content-Type-Options nosniff
 		reverse_proxy nona-panel-auth:4180
 	}
 
-	handle / {
-		redir /admin/ 302
+	handle /oauth2 {
+		reverse_proxy nona-panel-auth:4180
 	}
 
 	handle {

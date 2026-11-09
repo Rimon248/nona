@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Нона — панель оператора</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="panel.js" defer></script>
+</head>
+<body>
+  <div class="frame">
+    <aside class="sidebar" aria-label="Навигация">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">Н</span><span>Нона<small>Панель оператора</small></span></div>
+      <nav>
+        <a class="active" href="/admin/" aria-current="page">Обзор</a>
+        <a href="/auth/realms/nona/account/">Мой аккаунт</a>
+      </nav>
+      <p class="side-note">Управление VPN-узлами и пользователями появится после подключения выдачи конфигураций.</p>
+    </aside>
+    <div class="work">
+      <header class="topbar"><span>Домашний сервер</span><a href="/oauth2/sign_out?rd=/admin/">Выйти</a></header>
+      <main class="sheet">
+        <div class="title-row">
+          <div><h1>Обзор Ноны</h1><p>Состояние служб входа и управления устройствами.</p></div>
+          <button id="refresh" type="button">Проверить службы</button>
+        </div>
+        <p class="checked" id="checked" aria-live="polite">Проверка ещё не выполнена</p>
+        <section class="status-section" aria-labelledby="services-title">
+          <h2 id="services-title">Службы</h2>
+          <div class="status-list">
+            <div class="status-row"><div><strong>Вход пользователей</strong><small>Отдельный Keycloak Ноны</small></div><span id="identity" class="state">Проверка</span></div>
+            <div class="status-row"><div><strong>API устройств</strong><small>Регистрация и выдача подписанных пакетов</small></div><span id="api" class="state">Проверка</span></div>
+            <div class="status-row"><div><strong>Выдача VPN-доступа</strong><small>Создание и отзыв данных на VDSina</small></div><span id="provisioning" class="state">Проверка</span></div>
+          </div>
+        </section>
+        <section class="next-section" aria-labelledby="next-title">
+          <h2 id="next-title">Следующий этап</h2>
+          <p>Подключить автоматическую выдачу индивидуальных конфигураций и управление узлами. Пока пользователям не выдаётся рабочий VPN-доступ по аккаунту.</p>
+          <a href="/v1/info" target="_blank" rel="noopener noreferrer">Открыть состояние API</a>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
