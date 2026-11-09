@@ -23,7 +23,7 @@ Control API управляет учётными записями, устройс
 
 Каждый пользователь получает отдельные данные доступа для VLESS+REALITY и Hysteria2. Серверный provisioner хранит соответствие `user → device → credential → node`, создаёт и отзывает учётные данные на VDSina, а позже применяет тот же интерфейс к AdminVPS и Aeza. У каждого узла есть стабильный ID, регион, список протоколов, состояние и версия конфигурации. Адрес существующего VDSina-узла, его порты и секреты вводятся отдельно оператором и не зашиваются в приложение или документацию.
 
-Для транспортного ядра кандидат — sing-box: его документация описывает VLESS, Hysteria2, TUN и маршрутизацию; готовые клиенты существуют для всех целевых платформ. Перед включением в распространяемый продукт нужно проверить конкретную версию, сборку, совместимость конфигураций и условия GPL-3.0-or-later. Сейчас зависимость не включена. Не использовать устаревшие `geoip/geosite` поля: актуальные правила строить через versioned rule sets.
+Для VLESS+REALITY выбрано Xray-core, как в Happ и v2rayNG. Hysteria2 на первом этапе использует официальный Hysteria 2 core отдельно, как один из вариантов v2rayN. Реальные библиотеки и бинарники пока не включены; код подготовки конфигураций уже есть. Обоснование и лицензии — в `engine-choice.md`.
 
 ## Безопасность аккаунтов и конфигураций
 
@@ -57,5 +57,5 @@ Android `VpnService` даёт системный запрос разрешени
 - [Android VPN guide](https://developer.android.com/develop/connectivity/vpn) и [VpnService API](https://developer.android.com/reference/android/net/VpnService)
 - [Apple: Routing your VPN network traffic](https://developer.apple.com/documentation/networkextension/routing-your-vpn-network-traffic), [Network Extension setup](https://developer.apple.com/documentation/xcode/configuring-network-extensions/), [TN3120](https://developer.apple.com/documentation/technotes/tn3120-expected-use-cases-for-network-extension-packet-tunnel-providers), [TN3134](https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment)
 - [Microsoft: VPN connection types](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/vpn/vpn-connection-type) и [IVpnPlugIn](https://learn.microsoft.com/en-us/uwp/api/windows.networking.vpn.ivpnplugin)
-- [sing-box clients](https://sing-box.sagernet.org/clients/), [VLESS](https://sing-box.sagernet.org/configuration/outbound/vless/), [route rules](https://sing-box.sagernet.org/configuration/route/rule/), [license](https://github.com/SagerNet/sing-box)
+- [Xray-core](https://github.com/XTLS/Xray-core), [Hysteria 2](https://github.com/HyNetworks/hysteria), [v2rayNG](https://github.com/2dust/v2rayNG), [v2rayN supported cores](https://github.com/2dust/v2rayN/wiki/List-of-supported-cores), [Happ](https://www.happ.su/main)
 - [Apple Keychain](https://developer.apple.com/documentation/security/using-the-keychain-to-manage-user-secrets), [Windows DPAPI](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata)
