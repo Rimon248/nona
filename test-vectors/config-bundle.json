@@ -1,0 +1,8 @@
+{
+  "public_key_b64": "IVL40Zt5HSRFMkLhXy6rbLfP-ntqXtMAl5YOBpiB2xI",
+  "envelope": {
+    "key_id": "test-key-1",
+    "payload_b64": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiYWNjb3VudF9pZCI6ImFjY291bnQtYSIsImRldmljZV9pZCI6ImRldmljZS1hIiwidmVyc2lvbiI6MiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wOVQxMTo1OTowMFoiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wOVQxMzowMDowMFoiLCJydWxlc192ZXJzaW9uIjoxLCJub2RlcyI6W3siaWQiOiJub2RlLWEiLCJwcm92aWRlciI6InZkc2luYSIsImVuZHBvaW50IjoiZXhhbXBsZS5pbnZhbGlkIiwidHJhbnNwb3J0cyI6WyJ2bGVzcy1yZWFsaXR5IiwiaHlzdGVyaWEyIl0sImVuY3J5cHRlZF9jcmVkZW50aWFscyI6InBsYWNlaG9sZGVyLWNpcGhlcnRleHQifV19",
+    "signature": "J0i48eGAKueWDFm0t4DP9BDSdeMt1oRdfZrFuFBAc-P5WuIXCiStaUOqZ2Le_I-iVAQ3BbXYL9E3EjG6_FZuCA"
+  }
+}
