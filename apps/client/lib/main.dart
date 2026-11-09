@@ -266,9 +266,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: scheme.primary,
                           ),
                           const SizedBox(width: 12),
-                          Text(
-                            'Соединение не настроено',
-                            style: Theme.of(context).textTheme.titleLarge,
+                          Expanded(
+                            child: Text(
+                              'Соединение не настроено',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
                           ),
                         ],
                       ),
