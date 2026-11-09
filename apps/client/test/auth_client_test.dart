@@ -1,0 +1,135 @@
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:nona_client/auth_client.dart';
+import 'package:nona_client/configuration_vault.dart';
+
+class MemorySecureStore implements SecureStringStore {
+  final values = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String value) async => values[key] = value;
+
+  @override
+  Future<void> delete(String key) async => values.remove(key);
+}
+
+String tokenResponse(String access, String refresh) => jsonEncode({
+  'access_token': access,
+  'access_expires_at': '2026-11-09T12:15:00Z',
+  'refresh_token': refresh,
+  'refresh_expires_at': '2026-12-09T12:00:00Z',
+});
+
+void main() {
+  test('rejects a non-HTTPS account server', () {
+    expect(
+      () => AuthClient(
+        baseUri: Uri.parse('http://example.invalid'),
+        httpClient: MockClient((_) async => http.Response('', 200)),
+        secureStore: MemorySecureStore(),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('logs in, rotates a saved refresh token, and logs out', () async {
+    final store = MemorySecureStore();
+    final seen = <http.Request>[];
+    final client = MockClient((request) async {
+      seen.add(request);
+      if (request.url.path == '/v1/sessions') {
+        return http.Response(tokenResponse('access-1', 'refresh-1'), 200);
+      }
+      if (request.url.path == '/v1/sessions/refresh') {
+        expect(jsonDecode(request.body)['refresh_token'], 'refresh-1');
+        return http.Response(tokenResponse('access-2', 'refresh-2'), 200);
+      }
+      if (request.url.path == '/v1/sessions/current') {
+        expect(request.headers['authorization'], 'Bearer access-2');
+        return http.Response('', 204);
+      }
+      return http.Response('', 404);
+    });
+    final auth = AuthClient(
+      baseUri: Uri.parse('https://accounts.example.invalid'),
+      httpClient: client,
+      secureStore: store,
+    );
+    await auth.login('alice', 'a long test password');
+    expect(auth.signedIn, isTrue);
+    expect(store.values['nona.refresh_token.v1'], 'refresh-1');
+    expect(seen.first.url.scheme, 'https');
+    expect(seen.first.followRedirects, isFalse);
+
+    final restored = AuthClient(
+      baseUri: Uri.parse('https://accounts.example.invalid'),
+      httpClient: client,
+      secureStore: store,
+    );
+    expect(await restored.restore(), isTrue);
+    expect(store.values['nona.refresh_token.v1'], 'refresh-2');
+    await restored.logout();
+    expect(restored.signedIn, isFalse);
+    expect(store.values, isEmpty);
+  });
+
+  test('does not send credentials to a redirect destination', () async {
+    final auth = AuthClient(
+      baseUri: Uri.parse('https://accounts.example.invalid'),
+      httpClient: MockClient(
+        (_) async => http.Response(
+          '',
+          307,
+          headers: {'location': 'https://other.example.invalid'},
+        ),
+      ),
+      secureStore: MemorySecureStore(),
+    );
+    await expectLater(
+      auth.login('alice', 'a long test password'),
+      throwsA(isA<AuthException>()),
+    );
+  });
+
+  test(
+    'refreshes an expired access token before revoking the session',
+    () async {
+      final store = MemorySecureStore();
+      var deleteCalls = 0;
+      final auth = AuthClient(
+        baseUri: Uri.parse('https://accounts.example.invalid'),
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/v1/sessions') {
+            return http.Response(
+              tokenResponse('old-access', 'old-refresh'),
+              200,
+            );
+          }
+          if (request.url.path == '/v1/sessions/refresh') {
+            return http.Response(
+              tokenResponse('new-access', 'new-refresh'),
+              200,
+            );
+          }
+          if (request.url.path == '/v1/sessions/current') {
+            deleteCalls++;
+            return http.Response('', deleteCalls == 1 ? 401 : 204);
+          }
+          return http.Response('', 404);
+        }),
+        secureStore: store,
+      );
+      await auth.login('alice', 'a long test password');
+      await auth.logout();
+      expect(deleteCalls, 2);
+      expect(auth.signedIn, isFalse);
+      expect(store.values, isEmpty);
+    },
+  );
+}
