@@ -20,6 +20,7 @@ class MemorySecureStore implements SecureStringStore {
 }
 
 String tokenResponse(String access, String refresh) => jsonEncode({
+  'account_id': 'account-a',
   'access_token': access,
   'access_expires_at': '2026-11-09T12:15:00Z',
   'refresh_token': refresh,
@@ -63,6 +64,7 @@ void main() {
     );
     await auth.login('alice', 'a long test password');
     expect(auth.signedIn, isTrue);
+    expect(auth.accountId, 'account-a');
     expect(store.values['nona.refresh_token.v1'], 'refresh-1');
     expect(seen.first.url.scheme, 'https');
     expect(seen.first.followRedirects, isFalse);
@@ -73,10 +75,34 @@ void main() {
       secureStore: store,
     );
     expect(await restored.restore(), isTrue);
+    expect(restored.accountId, 'account-a');
     expect(store.values['nona.refresh_token.v1'], 'refresh-2');
     await restored.logout();
     expect(restored.signedIn, isFalse);
     expect(store.values, isEmpty);
+  });
+
+  test('fetches only the registered device configuration', () async {
+    const deviceId = '0123456789abcdef0123456789abcdef';
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/sessions') {
+        return http.Response(tokenResponse('access-1', 'refresh-1'), 200);
+      }
+      expect(request.headers['authorization'], 'Bearer access-1');
+      expect(request.url.path, '/v1/devices/$deviceId/configuration');
+      return http.Response('{"key_id":"test"}', 200);
+    });
+    final auth = AuthClient(
+      baseUri: Uri.parse('https://accounts.example.invalid'),
+      httpClient: client,
+      secureStore: MemorySecureStore(),
+    );
+    await auth.login('alice', 'a long test password');
+    expect(await auth.fetchConfiguration(deviceId), '{"key_id":"test"}');
+    await expectLater(
+      auth.fetchConfiguration('../another-device'),
+      throwsA(isA<AuthException>()),
+    );
   });
 
   test('does not send credentials to a redirect destination', () async {

@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"crypto/ecdh"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +18,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nona.example/control-api/internal/auth"
+	"nona.example/control-api/internal/configbundle"
+	"nona.example/control-api/internal/credentials"
 )
 
 func TestSessionHTTPAgainstPostgres(t *testing.T) {
@@ -59,7 +64,7 @@ func TestSessionHTTPAgainstPostgres(t *testing.T) {
 	if err := json.Unmarshal(record.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.AccessToken == "" || first.RefreshToken == "" {
+	if first.AccountID != accountID || first.AccessToken == "" || first.RefreshToken == "" {
 		t.Fatal("login returned empty token")
 	}
 
@@ -75,7 +80,7 @@ func TestSessionHTTPAgainstPostgres(t *testing.T) {
 	if err := json.Unmarshal(record.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.RefreshToken == first.RefreshToken || second.AccessToken == first.AccessToken {
+	if second.AccountID != accountID || second.RefreshToken == first.RefreshToken || second.AccessToken == first.AccessToken {
 		t.Fatal("tokens were not rotated")
 	}
 	request = httptest.NewRequest(http.MethodGet, "/v1/devices", nil)
@@ -110,12 +115,85 @@ func TestSessionHTTPAgainstPostgres(t *testing.T) {
 	if record.Code != http.StatusOK || !strings.Contains(record.Body.String(), device.ID) {
 		t.Fatalf("device list returned %d: %s", record.Code, record.Body.String())
 	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/devices/"+device.ID+"/configuration", nil)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated configuration returned %d", record.Code)
+	}
+	now := time.Now().UTC()
+	sealed, err := credentials.Seal(private.PublicKey().Bytes(), []byte(`{"example":"test-only"}`), credentials.Context{
+		AccountID: accountID, DeviceID: device.ID, NodeID: "node-a", Version: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := configbundle.NewPayload(accountID, device.ID, 1, 1, now.Add(-time.Minute), now.Add(time.Hour), []configbundle.Node{{
+		ID: "node-a", Provider: "vdsina", Endpoint: "example.invalid", Transports: []string{"vless-reality"}, EncryptedCredentials: sealed,
+	}})
+	envelope, err := configbundle.Sign(payload, "test-key", signingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.InstallConfiguration(ctx, accountID, device.ID, envelope, map[string]ed25519.PublicKey{"test-key": key}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.InstallConfiguration(ctx, accountID, device.ID, envelope, map[string]ed25519.PublicKey{"test-key": key}, now); err != nil {
+		t.Fatalf("identical install was not idempotent: %v", err)
+	}
+	payload.Nodes[0].Endpoint = "changed.example.invalid"
+	conflicting, err := configbundle.Sign(payload, "test-key", signingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.InstallConfiguration(ctx, accountID, device.ID, conflicting, map[string]ed25519.PublicKey{"test-key": key}, now); !errors.Is(err, auth.ErrConfigurationRollback) {
+		t.Fatalf("same-version replacement returned %v", err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/devices/"+device.ID+"/configuration", nil)
+	request.Header.Set("Authorization", "Bearer "+second.AccessToken)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusOK || record.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("configuration returned %d: %s", record.Code, record.Body.String())
+	}
+	var served configbundle.Envelope
+	if err := json.Unmarshal(record.Body.Bytes(), &served); err != nil || served.Signature != envelope.Signature {
+		t.Fatal("wrong configuration returned")
+	}
+	otherUsername := fmt.Sprintf("other_%d", time.Now().UnixNano())
+	otherID, err := service.CreateAccount(ctx, otherUsername, "a long test password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM accounts WHERE id=$1`, otherID)
+	otherTokens, err := service.Login(ctx, otherUsername, "a long test password", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/devices/"+device.ID+"/configuration", nil)
+	request.Header.Set("Authorization", "Bearer "+otherTokens.AccessToken)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusNotFound {
+		t.Fatalf("foreign configuration returned %d", record.Code)
+	}
 	request = httptest.NewRequest(http.MethodDelete, "/v1/devices/"+device.ID, nil)
 	request.Header.Set("Authorization", "Bearer "+second.AccessToken)
 	record = httptest.NewRecorder()
 	mux.ServeHTTP(record, request)
 	if record.Code != http.StatusNoContent {
 		t.Fatalf("revoke device returned %d: %s", record.Code, record.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/devices/"+device.ID+"/configuration", nil)
+	request.Header.Set("Authorization", "Bearer "+second.AccessToken)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusNotFound {
+		t.Fatalf("revoked configuration returned %d", record.Code)
 	}
 	request = httptest.NewRequest(http.MethodDelete, "/v1/sessions/current", nil)
 	request.Header.Set("Authorization", "Bearer "+second.AccessToken)

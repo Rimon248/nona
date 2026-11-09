@@ -116,12 +116,20 @@ func (s *Service) ListDevices(ctx context.Context, accountID string) ([]Device, 
 // RevokeDevice marks the device inactive. Transport credentials are not yet
 // issued by this service, so no remote node state needs changing at this stage.
 func (s *Service) RevokeDevice(ctx context.Context, accountID, deviceID string, now time.Time) error {
-	command, err := s.pool.Exec(ctx, `UPDATE devices SET revoked_at=$3 WHERE id=$1 AND account_id=$2 AND revoked_at IS NULL`, deviceID, accountID, now)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	command, err := tx.Exec(ctx, `UPDATE devices SET revoked_at=$3 WHERE id=$1 AND account_id=$2 AND revoked_at IS NULL`, deviceID, accountID, now)
 	if err != nil {
 		return err
 	}
 	if command.RowsAffected() != 1 {
 		return ErrDeviceNotFound
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `DELETE FROM device_configurations WHERE device_id=$1`, deviceID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

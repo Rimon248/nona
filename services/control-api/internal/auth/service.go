@@ -21,6 +21,7 @@ const (
 var usernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,31}$`)
 
 type Tokens struct {
+	AccountID        string    `json:"account_id"`
 	AccessToken      string    `json:"access_token"`
 	AccessExpiresAt  time.Time `json:"access_expires_at"`
 	RefreshToken     string    `json:"refresh_token"`
@@ -112,7 +113,10 @@ func (s *Service) Login(ctx context.Context, username, password string, now time
 	if err != nil {
 		return Tokens{}, err
 	}
-	tokens := Tokens{access, now.Add(accessLifetime), refresh, now.Add(refreshLifetime)}
+	tokens := Tokens{
+		AccountID: accountID, AccessToken: access, AccessExpiresAt: now.Add(accessLifetime),
+		RefreshToken: refresh, RefreshExpiresAt: now.Add(refreshLifetime),
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Tokens{}, err
@@ -146,13 +150,13 @@ func (s *Service) Refresh(ctx context.Context, token string, now time.Time) (Tok
 		return Tokens{}, err
 	}
 	defer tx.Rollback(ctx)
-	var sessionID string
+	var sessionID, accountID string
 	var expiresAt, sessionExpiresAt time.Time
 	var consumedAt, revokedAt, disabledAt *time.Time
-	err = tx.QueryRow(ctx, `SELECT r.session_id, r.expires_at, s.expires_at, r.consumed_at, s.revoked_at, a.disabled_at
+	err = tx.QueryRow(ctx, `SELECT r.session_id, s.account_id, r.expires_at, s.expires_at, r.consumed_at, s.revoked_at, a.disabled_at
 		FROM refresh_tokens r JOIN sessions s ON s.id=r.session_id
 		JOIN accounts a ON a.id=s.account_id WHERE r.token_hash=$1 FOR UPDATE OF r, s`, hash,
-	).Scan(&sessionID, &expiresAt, &sessionExpiresAt, &consumedAt, &revokedAt, &disabledAt)
+	).Scan(&sessionID, &accountID, &expiresAt, &sessionExpiresAt, &consumedAt, &revokedAt, &disabledAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Tokens{}, ErrInvalidCredentials
 	}
@@ -179,7 +183,10 @@ func (s *Service) Refresh(ctx context.Context, token string, now time.Time) (Tok
 	if err != nil {
 		return Tokens{}, err
 	}
-	tokens := Tokens{access, now.Add(accessLifetime), refresh, now.Add(refreshLifetime)}
+	tokens := Tokens{
+		AccountID: accountID, AccessToken: access, AccessExpiresAt: now.Add(accessLifetime),
+		RefreshToken: refresh, RefreshExpiresAt: now.Add(refreshLifetime),
+	}
 	if tokens.RefreshExpiresAt.After(sessionExpiresAt) {
 		tokens.RefreshExpiresAt = sessionExpiresAt
 	}
@@ -243,7 +250,7 @@ func (s *Service) Logout(ctx context.Context, token string, now time.Time) error
 }
 
 func (s *Service) CheckSchema(ctx context.Context) error {
-	for _, table := range []string{"accounts", "sessions", "refresh_tokens", "devices"} {
+	for _, table := range []string{"accounts", "sessions", "refresh_tokens", "devices", "device_configurations"} {
 		var exists bool
 		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
 			return err

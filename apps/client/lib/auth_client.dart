@@ -15,12 +15,14 @@ class AuthException implements Exception {
 
 class SessionTokens {
   const SessionTokens({
+    required this.accountId,
     required this.accessToken,
     required this.accessExpiresAt,
     required this.refreshToken,
     required this.refreshExpiresAt,
   });
 
+  final String accountId;
   final String accessToken;
   final DateTime accessExpiresAt;
   final String refreshToken;
@@ -30,11 +32,14 @@ class SessionTokens {
     if (input is! Map<String, dynamic>) {
       throw const AuthException('Invalid session response');
     }
+    final accountId = input['account_id'];
     final access = input['access_token'];
     final refresh = input['refresh_token'];
     final accessExpiry = input['access_expires_at'];
     final refreshExpiry = input['refresh_expires_at'];
-    if (access is! String ||
+    if (accountId is! String ||
+        accountId.isEmpty ||
+        access is! String ||
         access.isEmpty ||
         refresh is! String ||
         refresh.isEmpty ||
@@ -50,6 +55,7 @@ class SessionTokens {
       throw const AuthException('Invalid session expiry');
     }
     return SessionTokens(
+      accountId: accountId,
       accessToken: access,
       accessExpiresAt: accessTime,
       refreshToken: refresh,
@@ -79,6 +85,7 @@ class AuthClient {
   String? _username;
 
   bool get signedIn => _tokens != null;
+  String? get accountId => _tokens?.accountId;
   String? get username => _username;
 
   static Uri _validateBaseUri(Uri uri) {
@@ -100,6 +107,7 @@ class AuthClient {
     String path, {
     Object? body,
     String? accessToken,
+    int maxResponseBytes = 8192,
   }) async {
     final request = http.Request(method, _path(path))..followRedirects = false;
     if (body != null) {
@@ -116,7 +124,7 @@ class AuthClient {
     await for (final chunk in streamed.stream.timeout(
       const Duration(seconds: 10),
     )) {
-      if (bytes.length + chunk.length > 8192) {
+      if (bytes.length + chunk.length > maxResponseBytes) {
         throw const AuthException('Oversized server response');
       }
       bytes.addAll(chunk);
@@ -144,6 +152,7 @@ class AuthClient {
     String method,
     String path, {
     Object? body,
+    int maxResponseBytes = 8192,
   }) async {
     var access = _tokens?.accessToken;
     if (access == null) throw const AuthException('Sign in required');
@@ -152,13 +161,38 @@ class AuthClient {
       path,
       body: body,
       accessToken: access,
+      maxResponseBytes: maxResponseBytes,
     );
     if (response.$1 != 401) return response;
     if (!await restore()) throw const AuthException('Sign in required');
     access = _tokens?.accessToken;
     if (access == null) throw const AuthException('Sign in required');
-    response = await _request(method, path, body: body, accessToken: access);
+    response = await _request(
+      method,
+      path,
+      body: body,
+      accessToken: access,
+      maxResponseBytes: maxResponseBytes,
+    );
     return response;
+  }
+
+  /// Returns null when no update has been issued to this device yet. The
+  /// caller must verify the returned signature before saving or using it.
+  Future<String?> fetchConfiguration(String deviceId) async {
+    if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(deviceId)) {
+      throw const AuthException('Invalid device ID');
+    }
+    final (status, body) = await _authorizedRequest(
+      'GET',
+      '/v1/devices/$deviceId/configuration',
+      maxResponseBytes: 1500000,
+    );
+    if (status == 404) return null;
+    if (status != 200) {
+      throw const AuthException('Could not load configuration');
+    }
+    return body;
   }
 
   /// Saves an account-specific X25519 seed locally and sends only its public

@@ -228,6 +228,24 @@ func handler(service *auth.Service) http.Handler {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(devices)
 		})
+		mux.HandleFunc("GET /v1/devices/{id}/configuration", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			accountID, ok := currentAccount(w, r)
+			if !ok {
+				return
+			}
+			envelope, err := service.DeviceConfiguration(r.Context(), accountID, r.PathValue("id"), time.Now().UTC())
+			if errors.Is(err, auth.ErrConfigurationNotFound) {
+				http.Error(w, "configuration not found", http.StatusNotFound)
+				return
+			}
+			if err != nil {
+				http.Error(w, "server error", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, envelope)
+		})
 		mux.HandleFunc("DELETE /v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			accountID, ok := currentAccount(w, r)

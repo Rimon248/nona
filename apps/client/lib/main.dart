@@ -1,9 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'android_app_routing_screen.dart';
 import 'auth_client.dart';
+import 'config_bundle.dart';
+import 'configuration_sync.dart';
 import 'configuration_vault.dart';
 
 void main() => runApp(const NonaApp());
@@ -35,12 +39,18 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const _apiBaseUrl = String.fromEnvironment('NONA_API_BASE_URL');
+  static const _configKeyId = String.fromEnvironment('NONA_CONFIG_KEY_ID');
+  static const _configVerifyKey = String.fromEnvironment(
+    'NONA_CONFIG_VERIFY_KEY_B64',
+  );
   final _username = TextEditingController();
   final _password = TextEditingController();
   http.Client? _http;
   AuthClient? _auth;
+  ConfigurationVault? _vault;
   String? _deviceId;
   String? _message;
+  String _configurationMessage = 'На этом устройстве пока не сохранены';
   bool _busy = false;
 
   @override
@@ -54,10 +64,26 @@ class _HomeScreenState extends State<HomeScreen> {
         httpClient: _http!,
         secureStore: PlatformSecureStringStore(),
       );
-      _restore();
     } catch (_) {
       _message = 'Некорректный HTTPS-адрес сервера аккаунтов';
+      return;
     }
+    if (_configKeyId.isNotEmpty && _configVerifyKey.isNotEmpty) {
+      try {
+        final key = base64Url.decode(base64Url.normalize(_configVerifyKey));
+        if (key.length != 32 ||
+            base64UrlEncode(key).replaceAll('=', '') != _configVerifyKey) {
+          throw const FormatException('Invalid configuration signing key');
+        }
+        _vault = ConfigurationVault(
+          PlatformSecureStringStore(),
+          BundleVerifier({_configKeyId: key}),
+        );
+      } catch (_) {
+        _configurationMessage = 'Неверный ключ проверки обновлений';
+      }
+    }
+    _restore();
   }
 
   @override
@@ -95,10 +121,54 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       _deviceId = await auth.ensureDeviceRegistered(_deviceLabel);
       _message = null;
+      await _syncConfiguration(auth);
     } catch (_) {
       _deviceId = null;
       _message = 'Устройство не зарегистрировано. Повторите попытку.';
     }
+  }
+
+  Future<void> _syncConfiguration(AuthClient auth) async {
+    final vault = _vault;
+    final deviceId = _deviceId;
+    final accountId = auth.accountId;
+    if (vault == null || deviceId == null || accountId == null) {
+      _configurationMessage = 'Проверка обновлений ещё не настроена';
+      return;
+    }
+    try {
+      final bundle = await ConfigurationSync(
+        auth,
+        vault,
+      ).refresh(deviceId: deviceId, now: DateTime.now());
+      _configurationMessage = bundle == null
+          ? 'Сервер ещё не выдал конфигурацию этому устройству'
+          : 'Проверенное обновление ${bundle.version} сохранено';
+    } on BundleException {
+      _configurationMessage =
+          'Не удалось проверить подпись или срок обновления';
+    } catch (_) {
+      try {
+        final cached = await vault.load(
+          accountId: accountId,
+          deviceId: deviceId,
+          now: DateTime.now(),
+        );
+        _configurationMessage = cached == null
+            ? 'Не удалось получить обновление'
+            : 'Сохранено проверенное обновление ${cached.version}; сервер недоступен';
+      } catch (_) {
+        _configurationMessage = 'Не удалось получить обновление';
+      }
+    }
+  }
+
+  Future<void> _checkUpdates() async {
+    final auth = _auth;
+    if (auth == null || _deviceId == null) return;
+    setState(() => _busy = true);
+    await _syncConfiguration(auth);
+    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _retryDevice() async {
@@ -146,7 +216,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       await auth.logout();
+      await _vault?.clear();
       _deviceId = null;
+      _configurationMessage = 'На этом устройстве пока не сохранены';
     } catch (_) {
       if (mounted) {
         setState(
@@ -276,20 +348,27 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 16),
                       const Text(
-                        'Вход в аккаунт уже доступен при настроенном сервере. '
-                        'Выдача индивидуальных конфигураций и VPN-подключение '
-                        'появятся после настройки устройств и системных модулей.',
+                        'Вход и проверка обновлений доступны при настроенном '
+                        'сервере. VPN-подключение появится после автоматической '
+                        'выдачи данных доступа и проверки сетевого модуля.',
                       ),
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 20),
-              const Card(
+              Card(
                 child: ListTile(
-                  leading: Icon(Icons.shield_outlined),
-                  title: Text('Конфигурации'),
-                  subtitle: Text('На этом устройстве пока не сохранены'),
+                  leading: const Icon(Icons.shield_outlined),
+                  title: const Text('Конфигурации'),
+                  subtitle: Text(_configurationMessage),
+                  trailing: _deviceId == null || _vault == null
+                      ? null
+                      : IconButton(
+                          tooltip: 'Проверить обновления',
+                          onPressed: _busy ? null : _checkUpdates,
+                          icon: const Icon(Icons.refresh),
+                        ),
                 ),
               ),
               if (defaultTargetPlatform == TargetPlatform.android)

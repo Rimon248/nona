@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'config_bundle.dart';
@@ -35,9 +37,13 @@ class ConfigurationVault {
 
   static const _bundleKey = 'nona.active_bundle.v1';
   static const _versionKey = 'nona.minimum_bundle_version.v1';
+  static const _identityKey = 'nona.bundle_identity.v1';
 
   final SecureStringStore _store;
   final BundleVerifier _verifier;
+
+  String _identity(String accountId, String deviceId) =>
+      jsonEncode([accountId, deviceId]);
 
   Future<int> _minimumVersion() async {
     final text = await _store.read(_versionKey);
@@ -55,6 +61,12 @@ class ConfigurationVault {
     required String deviceId,
     required DateTime now,
   }) async {
+    final identity = _identity(accountId, deviceId);
+    if (await _store.read(_identityKey) != identity) {
+      // A previous account's version floor and bundle must never affect this
+      // account. This also drops unbound data from older client builds.
+      await clear();
+    }
     final floor = await _minimumVersion();
     final verified = await _verifier.verify(
       envelopeJson,
@@ -63,6 +75,7 @@ class ConfigurationVault {
       minimumVersion: floor,
       now: now,
     );
+    await _store.write(_identityKey, identity);
     if (verified.version > floor) {
       await _store.write(_versionKey, verified.version.toString());
     }
@@ -75,6 +88,9 @@ class ConfigurationVault {
     required String deviceId,
     required DateTime now,
   }) async {
+    if (await _store.read(_identityKey) != _identity(accountId, deviceId)) {
+      return null;
+    }
     final floor = await _minimumVersion();
     final envelopeJson = await _store.read(_bundleKey);
     if (envelopeJson == null) return null;
@@ -127,5 +143,6 @@ class ConfigurationVault {
   Future<void> clear() async {
     await _store.delete(_bundleKey);
     await _store.delete(_versionKey);
+    await _store.delete(_identityKey);
   }
 }

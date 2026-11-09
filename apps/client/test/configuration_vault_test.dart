@@ -79,6 +79,10 @@ void main() {
 
   test('refuses a corrupted version floor', () async {
     final store = MemoryStore();
+    store.values['nona.bundle_identity.v1'] = jsonEncode([
+      'account-a',
+      'device-a',
+    ]);
     store.values['nona.minimum_bundle_version.v1'] = 'bad';
     final vault = ConfigurationVault(store, verifier);
     await expectLater(
@@ -89,6 +93,62 @@ void main() {
         now: now,
       ),
       throwsA(isA<BundleException>()),
+    );
+  });
+
+  test('does not carry a version floor into another account', () async {
+    final store = MemoryStore();
+    final firstVault = ConfigurationVault(store, verifier);
+    await firstVault.accept(
+      envelope,
+      accountId: 'account-a',
+      deviceId: 'device-a',
+      now: now,
+    );
+    final payload = jsonDecode(
+      utf8.decode(
+        base64Url.decode(
+          base64Url.normalize(
+            (fixture['envelope'] as Map<String, dynamic>)['payload_b64']
+                as String,
+          ),
+        ),
+      ),
+    ) as Map<String, dynamic>;
+    payload['account_id'] = 'account-b';
+    payload['device_id'] = 'device-b';
+    payload['version'] = 1;
+    final keyPair = await Ed25519().newKeyPair();
+    final bytes = utf8.encode(jsonEncode(payload));
+    final signature = await Ed25519().sign([
+      ...utf8.encode('NONA-CONFIG-BUNDLE-v1\u0000'),
+      ...bytes,
+    ], keyPair: keyPair);
+    final secondEnvelope = jsonEncode({
+      'key_id': 'test-key-2',
+      'payload_b64': base64UrlEncode(bytes).replaceAll('=', ''),
+      'signature': base64UrlEncode(signature.bytes).replaceAll('=', ''),
+    });
+    final secondVault = ConfigurationVault(
+      store,
+      BundleVerifier({'test-key-2': (await keyPair.extractPublicKey()).bytes}),
+    );
+    expect(
+      (await secondVault.accept(
+        secondEnvelope,
+        accountId: 'account-b',
+        deviceId: 'device-b',
+        now: now,
+      )).version,
+      1,
+    );
+    expect(
+      await firstVault.load(
+        accountId: 'account-a',
+        deviceId: 'device-a',
+        now: now,
+      ),
+      isNull,
     );
   });
 
