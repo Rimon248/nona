@@ -48,6 +48,11 @@ func TestSessionHTTPAgainstPostgres(t *testing.T) {
 	}
 	defer pool.Exec(context.Background(), `DELETE FROM accounts WHERE id=$1`, accountID)
 	mux := handler(service)
+	ready := httptest.NewRecorder()
+	mux.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusOK {
+		t.Fatalf("healthy database returned %d from readiness endpoint", ready.Code)
+	}
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/sessions",
 		strings.NewReader(fmt.Sprintf(`{"username":%q,"password":"a long test password"}`, username)))

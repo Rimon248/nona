@@ -38,6 +38,11 @@ type Service struct {
 	dummyHash string
 }
 
+// Ready reports whether the account database can currently answer requests.
+func (s *Service) Ready(ctx context.Context) error {
+	return s.pool.Ping(ctx)
+}
+
 func NewService(pool *pgxpool.Pool) (*Service, error) {
 	if pool == nil {
 		return nil, errors.New("database pool is required")

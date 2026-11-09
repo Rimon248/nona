@@ -18,6 +18,14 @@ func TestInfoDoesNotClaimProvisioning(t *testing.T) {
 	}
 }
 
+func TestReadinessRequiresAccountService(t *testing.T) {
+	r := httptest.NewRecorder()
+	handler(nil).ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if r.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected readiness response: %d", r.Code)
+	}
+}
+
 func TestJSONBodyRejectsTrailingData(t *testing.T) {
 	r := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"a":1} {"b":2}`))

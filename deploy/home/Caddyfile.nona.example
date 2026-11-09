@@ -1,0 +1,12 @@
+# Add this site block to the existing Caddy configuration on the home server.
+# Keep the /v1 prefix: the Go API expects it.
+# The admin panel is intentionally not exposed until it has operator authentication.
+nona.server.basketref.ru {
+	handle /v1/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	handle {
+		respond 404
+	}
+}
