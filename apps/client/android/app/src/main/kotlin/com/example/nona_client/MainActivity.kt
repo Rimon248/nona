@@ -2,12 +2,16 @@ package com.example.nona_client
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.VpnService
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private val vpnPermissionRequestCode = 50773
+    private var vpnPermissionResult: MethodChannel.Result? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nona.app_routing")
@@ -37,6 +41,57 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nona.vpn")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "prepare" -> {
+                        if (vpnPermissionResult != null) {
+                            result.error("BUSY", "VPN permission request is already open", null)
+                        } else {
+                            val permission = VpnService.prepare(this)
+                            if (permission == null) result.success(true)
+                            else {
+                                vpnPermissionResult = result
+                                startActivityForResult(permission, vpnPermissionRequestCode)
+                            }
+                        }
+                    }
+                    "start" -> {
+                        val config = (call.arguments as? Map<*, *>)?.get("config") as? String
+                        if (config == null || VpnService.prepare(this) != null) {
+                            result.error("NOT_READY", "VPN permission or profile is missing", null)
+                        } else {
+                            try {
+                                NonaVpnService.start(this, config)
+                                result.success(null)
+                            } catch (_: Exception) {
+                                result.error("START_FAILED", "Could not start VPN service", null)
+                            }
+                        }
+                    }
+                    "status" -> result.success(NonaVpnService.state)
+                    "stop" -> {
+                        NonaVpnService.stop(this)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    @Deprecated("Android activity result callback")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == vpnPermissionRequestCode) {
+            vpnPermissionResult?.success(resultCode == RESULT_OK && VpnService.prepare(this) == null)
+            vpnPermissionResult = null
+        }
+    }
+
+    override fun onDestroy() {
+        vpnPermissionResult?.error("CANCELLED", "VPN permission request was interrupted", null)
+        vpnPermissionResult = null
+        super.onDestroy()
     }
 
     private fun launchableApps(): List<Map<String, String>> {
