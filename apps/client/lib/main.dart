@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'android_app_routing_screen.dart';
 import 'auth_client.dart';
 import 'configuration_vault.dart';
 
@@ -246,11 +248,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   subtitle: Text('На этом устройстве пока не сохранены'),
                 ),
               ),
+              if (defaultTargetPlatform == TargetPlatform.android)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.apps_outlined),
+                    title: const Text('Приложения без VPN'),
+                    subtitle: const Text(
+                      'Выбрать приложения для прямого соединения',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const AndroidAppRoutingScreen(),
+                      ),
+                    ),
+                  ),
+                ),
               const Card(
                 child: ListTile(
                   leading: Icon(Icons.route_outlined),
                   title: Text('Маршрутизация'),
-                  subtitle: Text('Правила появятся после синхронизации'),
+                  subtitle: Text(
+                    'Маршруты для сайтов появятся после синхронизации',
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
