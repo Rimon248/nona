@@ -98,6 +98,61 @@ void main() {
   });
 
   test(
+    'device registration recovers after a lost response without a new key',
+    () async {
+      final store = MemorySecureStore();
+      String? registeredPublic;
+      var postCount = 0;
+      final auth = AuthClient(
+        baseUri: Uri.parse('https://accounts.example.invalid'),
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/v1/sessions') {
+            return http.Response(tokenResponse('access-1', 'refresh-1'), 200);
+          }
+          expect(request.headers['authorization'], 'Bearer access-1');
+          if (request.url.path == '/v1/devices' && request.method == 'GET') {
+            return http.Response(
+              jsonEncode(
+                registeredPublic == null
+                    ? []
+                    : [
+                        {
+                          'id': 'device-1',
+                          'public_key': registeredPublic,
+                          'revoked_at': null,
+                        },
+                      ],
+              ),
+              200,
+            );
+          }
+          if (request.url.path == '/v1/devices' && request.method == 'POST') {
+            postCount++;
+            registeredPublic = jsonDecode(request.body)['public_key'] as String;
+            return http.Response(
+              '{',
+              201,
+            ); // Server committed, response was lost.
+          }
+          return http.Response('', 404);
+        }),
+        secureStore: store,
+      );
+      await auth.login('Alice', 'a long test password');
+      await expectLater(
+        auth.ensureDeviceRegistered('Android'),
+        throwsA(isA<AuthException>()),
+      );
+      final seed = store.values['nona.device_seed.v1.alice'];
+      expect(seed, isNotNull);
+      expect(seed, isNot(registeredPublic));
+      expect(await auth.ensureDeviceRegistered('Android'), 'device-1');
+      expect(store.values['nona.device_seed.v1.alice'], seed);
+      expect(postCount, 1);
+    },
+  );
+
+  test(
     'refreshes an expired access token before revoking the session',
     () async {
       final store = MemorySecureStore();

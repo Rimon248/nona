@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
 
 import 'configuration_vault.dart';
@@ -137,6 +138,112 @@ class AuthClient {
     } on FormatException {
       throw const AuthException('Invalid session response');
     }
+  }
+
+  Future<(int, String)> _authorizedRequest(
+    String method,
+    String path, {
+    Object? body,
+  }) async {
+    var access = _tokens?.accessToken;
+    if (access == null) throw const AuthException('Sign in required');
+    var response = await _request(
+      method,
+      path,
+      body: body,
+      accessToken: access,
+    );
+    if (response.$1 != 401) return response;
+    if (!await restore()) throw const AuthException('Sign in required');
+    access = _tokens?.accessToken;
+    if (access == null) throw const AuthException('Sign in required');
+    response = await _request(method, path, body: body, accessToken: access);
+    return response;
+  }
+
+  /// Saves an account-specific X25519 seed locally and sends only its public
+  /// key. Rechecking the server list makes a lost POST response safe to retry.
+  Future<String> ensureDeviceRegistered(String label) async {
+    final username = _username?.trim().toLowerCase();
+    if (_tokens == null || username == null || username.isEmpty) {
+      throw const AuthException('Sign in required');
+    }
+    final keyName = 'nona.device_seed.v1.$username';
+    final algorithm = X25519();
+    var encodedSeed = await _store.read(keyName);
+    if (encodedSeed == null) {
+      final generated = await algorithm.newKeyPair();
+      encodedSeed = base64UrlEncode(await generated.extractPrivateKeyBytes())
+          .replaceAll('=', '');
+      await _store.write(keyName, encodedSeed);
+    }
+    Future<String> publicKey(String seed) async {
+      late final List<int> bytes;
+      try {
+        bytes = base64Url.decode(base64Url.normalize(seed));
+      } on FormatException {
+        throw const AuthException('Invalid saved device key');
+      }
+      if (bytes.length != 32) {
+        throw const AuthException('Invalid saved device key');
+      }
+      final pair = await algorithm.newKeyPairFromSeed(bytes);
+      return base64UrlEncode((await pair.extractPublicKey()).bytes)
+          .replaceAll('=', '');
+    }
+
+    var public = await publicKey(encodedSeed);
+    final (listStatus, listBody) = await _authorizedRequest(
+      'GET',
+      '/v1/devices',
+    );
+    if (listStatus != 200) {
+      throw const AuthException('Could not load devices');
+    }
+    late final Object? parsed;
+    try {
+      parsed = jsonDecode(listBody);
+    } on FormatException {
+      throw const AuthException('Invalid device response');
+    }
+    if (parsed is! List) {
+      throw const AuthException('Invalid device response');
+    }
+    for (final item in parsed) {
+      if (item is! Map<String, dynamic>) {
+        throw const AuthException('Invalid device response');
+      }
+      if (item['public_key'] == public) {
+        if (item['revoked_at'] == null && item['id'] is String) {
+          return item['id'] as String;
+        }
+        final replacement = await algorithm.newKeyPair();
+        encodedSeed = base64UrlEncode(
+          await replacement.extractPrivateKeyBytes(),
+        ).replaceAll('=', '');
+        await _store.write(keyName, encodedSeed);
+        public = await publicKey(encodedSeed);
+        break;
+      }
+    }
+    final (status, responseBody) = await _authorizedRequest(
+      'POST',
+      '/v1/devices',
+      body: {'label': label, 'public_key': public},
+    );
+    if (status == 409) throw const AuthException('Device limit or duplicate');
+    if (status != 201) throw const AuthException('Could not register device');
+    try {
+      final device = jsonDecode(responseBody);
+      if (device is Map<String, dynamic> &&
+          device['id'] is String &&
+          device['public_key'] == public) {
+        return device['id'] as String;
+      }
+    } on FormatException {
+      // The seed is retained for recovery through GET on the next attempt.
+    }
+    throw const AuthException('Invalid device response');
   }
 
   Future<void> login(String username, String password) async {

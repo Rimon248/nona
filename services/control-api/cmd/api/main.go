@@ -168,6 +168,80 @@ func handler(service *auth.Service) http.Handler {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		})
+		currentAccount := func(w http.ResponseWriter, r *http.Request) (string, bool) {
+			session, err := service.Authenticate(r.Context(), bearerToken(r), time.Now().UTC())
+			if errors.Is(err, auth.ErrInvalidCredentials) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return "", false
+			}
+			if err != nil {
+				http.Error(w, "server error", http.StatusInternalServerError)
+				return "", false
+			}
+			return session.AccountID, true
+		}
+		mux.HandleFunc("POST /v1/devices", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			accountID, ok := currentAccount(w, r)
+			if !ok {
+				return
+			}
+			var input struct {
+				Label     string `json:"label"`
+				PublicKey string `json:"public_key"`
+			}
+			if !decodeJSON(w, r, &input) {
+				return
+			}
+			device, err := service.RegisterDevice(r.Context(), accountID, input.Label, input.PublicKey)
+			if errors.Is(err, auth.ErrInvalidDevice) {
+				http.Error(w, "invalid device", http.StatusBadRequest)
+				return
+			}
+			if errors.Is(err, auth.ErrDeviceExists) {
+				http.Error(w, "device key already registered", http.StatusConflict)
+				return
+			}
+			if errors.Is(err, auth.ErrDeviceLimit) {
+				http.Error(w, "device limit reached", http.StatusConflict)
+				return
+			}
+			if err != nil {
+				http.Error(w, "server error", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(device)
+		})
+		mux.HandleFunc("GET /v1/devices", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			accountID, ok := currentAccount(w, r)
+			if !ok {
+				return
+			}
+			devices, err := service.ListDevices(r.Context(), accountID)
+			if err != nil {
+				http.Error(w, "server error", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(devices)
+		})
+		mux.HandleFunc("DELETE /v1/devices/{id}", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			accountID, ok := currentAccount(w, r)
+			if !ok {
+				return
+			}
+			if err := service.RevokeDevice(r.Context(), accountID, r.PathValue("id"), time.Now().UTC()); errors.Is(err, auth.ErrDeviceNotFound) {
+				http.Error(w, "device not found", http.StatusNotFound)
+			} else if err != nil {
+				http.Error(w, "server error", http.StatusInternalServerError)
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+		})
 	}
 	return mux
 }

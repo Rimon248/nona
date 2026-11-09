@@ -39,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _password = TextEditingController();
   http.Client? _http;
   AuthClient? _auth;
+  String? _deviceId;
   String? _message;
   bool _busy = false;
 
@@ -72,7 +73,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (auth == null) return;
     setState(() => _busy = true);
     try {
-      await auth.restore();
+      if (await auth.restore()) await _registerDevice(auth);
     } catch (_) {
       if (mounted) {
         setState(() => _message = 'Не удалось проверить сохранённую сессию');
@@ -80,6 +81,32 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  String get _deviceLabel => switch (defaultTargetPlatform) {
+    TargetPlatform.android => 'Android',
+    TargetPlatform.iOS => 'iPhone / iPad',
+    TargetPlatform.macOS => 'Mac',
+    TargetPlatform.windows => 'Windows',
+    _ => 'Устройство',
+  };
+
+  Future<void> _registerDevice(AuthClient auth) async {
+    try {
+      _deviceId = await auth.ensureDeviceRegistered(_deviceLabel);
+      _message = null;
+    } catch (_) {
+      _deviceId = null;
+      _message = 'Устройство не зарегистрировано. Повторите попытку.';
+    }
+  }
+
+  Future<void> _retryDevice() async {
+    final auth = _auth;
+    if (auth == null || !auth.signedIn) return;
+    setState(() => _busy = true);
+    await _registerDevice(auth);
+    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _login() async {
@@ -92,6 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await auth.login(_username.text.trim(), _password.text);
       _password.clear();
+      await _registerDevice(auth);
     } on AuthException catch (error) {
       if (mounted) {
         setState(
@@ -118,6 +146,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       await auth.logout();
+      _deviceId = null;
     } catch (_) {
       if (mounted) {
         setState(
@@ -143,7 +172,20 @@ class _HomeScreenState extends State<HomeScreen> {
               const Text('HTTPS-адрес сервера аккаунтов ещё не настроен.')
             else if (auth.signedIn) ...[
               Text('Выполнен вход: ${auth.username ?? 'пользователь'}'),
+              const SizedBox(height: 8),
+              Text(
+                _deviceId == null
+                    ? 'Устройство ожидает регистрации'
+                    : 'Устройство зарегистрировано',
+              ),
               const SizedBox(height: 12),
+              if (_deviceId == null) ...[
+                OutlinedButton(
+                  onPressed: _busy ? null : _retryDevice,
+                  child: const Text('Повторить регистрацию'),
+                ),
+                const SizedBox(height: 8),
+              ],
               OutlinedButton(
                 onPressed: _busy ? null : _logout,
                 child: const Text('Выйти'),

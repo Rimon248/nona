@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -75,6 +77,45 @@ func TestSessionHTTPAgainstPostgres(t *testing.T) {
 	}
 	if second.RefreshToken == first.RefreshToken || second.AccessToken == first.AccessToken {
 		t.Fatal("tokens were not rotated")
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/devices", nil)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated device list returned %d", record.Code)
+	}
+	privateBytes := make([]byte, 32)
+	privateBytes[0] = 8
+	private, err := ecdh.X25519().NewPrivateKey(privateBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := base64.RawURLEncoding.EncodeToString(private.PublicKey().Bytes())
+	request = httptest.NewRequest(http.MethodPost, "/v1/devices", strings.NewReader(fmt.Sprintf(`{"label":"Test phone","public_key":%q}`, public)))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+second.AccessToken)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusCreated {
+		t.Fatalf("register device returned %d: %s", record.Code, record.Body.String())
+	}
+	var device auth.Device
+	if err := json.Unmarshal(record.Body.Bytes(), &device); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/devices", nil)
+	request.Header.Set("Authorization", "Bearer "+second.AccessToken)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusOK || !strings.Contains(record.Body.String(), device.ID) {
+		t.Fatalf("device list returned %d: %s", record.Code, record.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodDelete, "/v1/devices/"+device.ID, nil)
+	request.Header.Set("Authorization", "Bearer "+second.AccessToken)
+	record = httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusNoContent {
+		t.Fatalf("revoke device returned %d: %s", record.Code, record.Body.String())
 	}
 	request = httptest.NewRequest(http.MethodDelete, "/v1/sessions/current", nil)
 	request.Header.Set("Authorization", "Bearer "+second.AccessToken)

@@ -243,7 +243,7 @@ func (s *Service) Logout(ctx context.Context, token string, now time.Time) error
 }
 
 func (s *Service) CheckSchema(ctx context.Context) error {
-	for _, table := range []string{"accounts", "sessions", "refresh_tokens"} {
+	for _, table := range []string{"accounts", "sessions", "refresh_tokens", "devices"} {
 		var exists bool
 		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
 			return err
