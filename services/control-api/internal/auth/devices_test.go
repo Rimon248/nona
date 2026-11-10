@@ -89,6 +89,24 @@ func TestDeviceOwnershipAndRevocationAgainstPostgres(t *testing.T) {
 	if err := service.RevokeDevice(ctx, second, device.ID, time.Now().UTC()); !errors.Is(err, ErrDeviceNotFound) {
 		t.Fatalf("other account revoked device: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO device_configurations (device_id, version, expires_at, envelope) VALUES ($1,1,now()+interval '1 day','sealed')`, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RevokeDevice(ctx, first, device.ID, time.Now().UTC()); !errors.Is(err, ErrDeviceProvisioned) {
+		t.Fatalf("remote credentials were left usable after revocation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM device_configurations WHERE device_id=$1`, device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO device_remote_credentials (device_id,node_id,client_id) VALUES ($1,'test-node',$2)`, device.ID, "nona_"+suffix); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RevokeDevice(ctx, first, device.ID, time.Now().UTC()); !errors.Is(err, ErrDeviceProvisioned) {
+		t.Fatalf("remote credential marker was ignored: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM device_remote_credentials WHERE device_id=$1`, device.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.RevokeDevice(ctx, first, device.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}

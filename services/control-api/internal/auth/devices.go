@@ -16,6 +16,7 @@ var ErrInvalidDevice = errors.New("invalid device")
 var ErrDeviceLimit = errors.New("device limit reached")
 var ErrDeviceExists = errors.New("device key already registered")
 var ErrDeviceNotFound = errors.New("device not found")
+var ErrDeviceProvisioned = errors.New("device has remote VPN credentials")
 
 type Device struct {
 	ID        string     `json:"id"`
@@ -113,14 +114,52 @@ func (s *Service) ListDevices(ctx context.Context, accountID string) ([]Device, 
 	return result, rows.Err()
 }
 
-// RevokeDevice marks the device inactive. Transport credentials are not yet
-// issued by this service, so no remote node state needs changing at this stage.
+// RevokeDevice refuses to mark a provisioned device revoked until an operator
+// has deleted its remote VPN credentials. Otherwise the old keys would keep
+// working even though the API no longer serves the configuration.
 func (s *Service) RevokeDevice(ctx context.Context, accountID, deviceID string, now time.Time) error {
+	return s.revokeDevice(ctx, accountID, deviceID, now, nil)
+}
+
+// RevokeProvisionedDevice is an operator-only path. The remote deletion runs
+// while the device row is locked, and configuration installation uses the same
+// lock before committing a new envelope.
+func (s *Service) RevokeProvisionedDevice(ctx context.Context, accountID, deviceID string, now time.Time, remoteDelete func(context.Context) error) error {
+	if remoteDelete == nil {
+		return errors.New("remote deletion callback is required")
+	}
+	return s.revokeDevice(ctx, accountID, deviceID, now, remoteDelete)
+}
+
+func (s *Service) revokeDevice(ctx context.Context, accountID, deviceID string, now time.Time, remoteDelete func(context.Context) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, deviceID); err != nil {
+		return err
+	}
+	var lockedID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM devices WHERE id=$1 AND account_id=$2 AND revoked_at IS NULL FOR UPDATE`, deviceID, accountID).Scan(&lockedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrDeviceNotFound
+		}
+		return err
+	}
+	var provisioned bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_configurations WHERE device_id=$1)
+		OR EXISTS (SELECT 1 FROM device_remote_credentials WHERE device_id=$1)`, deviceID).Scan(&provisioned); err != nil {
+		return err
+	}
+	if provisioned && remoteDelete == nil {
+		return ErrDeviceProvisioned
+	}
+	if remoteDelete != nil {
+		if err := remoteDelete(ctx); err != nil {
+			return err
+		}
+	}
 	command, err := tx.Exec(ctx, `UPDATE devices SET revoked_at=$3 WHERE id=$1 AND account_id=$2 AND revoked_at IS NULL`, deviceID, accountID, now)
 	if err != nil {
 		return err
@@ -130,6 +169,11 @@ func (s *Service) RevokeDevice(ctx context.Context, accountID, deviceID string, 
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM device_configurations WHERE device_id=$1`, deviceID); err != nil {
 		return err
+	}
+	if remoteDelete != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM device_remote_credentials WHERE device_id=$1`, deviceID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

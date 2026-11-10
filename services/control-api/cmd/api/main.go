@@ -312,6 +312,8 @@ func handlerWithOIDC(service *auth.Service, verifier *oidc.Verifier) http.Handle
 			}
 			if err := service.RevokeDevice(r.Context(), accountID, r.PathValue("id"), time.Now().UTC()); errors.Is(err, auth.ErrDeviceNotFound) {
 				http.Error(w, "device not found", http.StatusNotFound)
+			} else if errors.Is(err, auth.ErrDeviceProvisioned) {
+				http.Error(w, "device has active VPN credentials; contact administrator", http.StatusConflict)
 			} else if err != nil {
 				http.Error(w, "server error", http.StatusInternalServerError)
 			} else {

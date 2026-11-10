@@ -19,7 +19,7 @@ import (
 )
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: admin create-user USERNAME | install-configuration ACCOUNT_ID DEVICE_ID ENVELOPE_FILE")
+	fmt.Fprintln(os.Stderr, "usage: admin create-user USERNAME | install-configuration ACCOUNT_ID DEVICE_ID ENVELOPE_FILE | provision-device ACCOUNT_ID DEVICE_ID | retire-device ACCOUNT_ID DEVICE_ID")
 	os.Exit(2)
 }
 
@@ -129,6 +129,26 @@ func main() {
 		pool, service := openService()
 		defer pool.Close()
 		installConfiguration(service, os.Args[2], os.Args[3], os.Args[4])
+	case "provision-device":
+		if len(os.Args) != 4 {
+			usage()
+		}
+		pool, service := openService()
+		defer pool.Close()
+		if err := provisionDevice(pool, service, os.Args[2], os.Args[3]); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+	case "retire-device":
+		if len(os.Args) != 4 {
+			usage()
+		}
+		pool, service := openService()
+		defer pool.Close()
+		if err := retireDevice(service, os.Args[2], os.Args[3]); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
 	default:
 		usage()
 	}
