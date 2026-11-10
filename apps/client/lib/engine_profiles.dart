@@ -138,11 +138,18 @@ class Hysteria2Profile {
     required this.port,
     required this.auth,
     required this.serverName,
+    this.salamanderPassword,
   }) {
     _checkHost(host);
     _checkHost(serverName);
     _checkPort(port);
-    if (auth.isEmpty || auth.length > 1024 || auth.contains('\n')) {
+    if (auth.isEmpty ||
+        auth.length > 1024 ||
+        auth.contains('\n') ||
+        (salamanderPassword != null &&
+            (salamanderPassword!.isEmpty ||
+                salamanderPassword!.length > 1024 ||
+                salamanderPassword!.contains('\n')))) {
       throw const EngineProfileException('Invalid Hysteria2 authentication');
     }
   }
@@ -151,6 +158,7 @@ class Hysteria2Profile {
   final int port;
   final String auth;
   final String serverName;
+  final String? salamanderPassword;
 
   NativeCore get core => NativeCore.hysteria2;
 
@@ -160,6 +168,11 @@ class Hysteria2Profile {
       'server': _hostPort(host, port),
       'auth': auth,
       'tls': {'sni': serverName, 'insecure': false},
+      if (salamanderPassword != null)
+        'obfs': {
+          'type': 'salamander',
+          'salamander': {'password': salamanderPassword!},
+        },
       'socks5': {'listen': '127.0.0.1:$localSocksPort', 'disableUDP': false},
     };
   }

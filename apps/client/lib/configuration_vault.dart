@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'config_bundle.dart';
 import 'credential_box.dart';
+import 'node_access.dart';
 
 abstract interface class SecureStringStore {
   Future<String?> read(String key);
@@ -121,24 +122,70 @@ class ConfigurationVault {
     if (bundle == null) {
       throw const BundleException('No saved configuration');
     }
-    final nodes = bundle.payload['nodes'] as List;
-    for (final item in nodes) {
+    final node = _findNode(bundle, nodeId);
+    return _openNode(bundle, node, accountId, deviceId, nodeId, deviceSeed);
+  }
+
+  Future<NodeAccess> openNodeAccess({
+    required String accountId,
+    required String deviceId,
+    required String nodeId,
+    required List<int> deviceSeed,
+    required DateTime now,
+  }) async {
+    final bundle = await load(
+      accountId: accountId,
+      deviceId: deviceId,
+      now: now,
+    );
+    if (bundle == null) {
+      throw const BundleException('No saved configuration');
+    }
+    final node = _findNode(bundle, nodeId);
+    final plaintext = await _openNode(
+      bundle,
+      node,
+      accountId,
+      deviceId,
+      nodeId,
+      deviceSeed,
+    );
+    try {
+      return NodeAccess.parse(
+        plaintext,
+        endpoint: node['endpoint'] as String,
+        transports: (node['transports'] as List).cast<String>(),
+      );
+    } finally {
+      plaintext.fillRange(0, plaintext.length, 0);
+    }
+  }
+
+  Map<String, dynamic> _findNode(VerifiedBundle bundle, String nodeId) {
+    for (final item in bundle.payload['nodes'] as List) {
       final node = item as Map<String, dynamic>;
-      if (node['id'] == nodeId) {
-        return const CredentialBox().open(
-          encoded: node['encrypted_credentials'] as String,
-          deviceSeed: deviceSeed,
-          context: CredentialContext(
-            accountId: accountId,
-            deviceId: deviceId,
-            nodeId: nodeId,
-            version: bundle.version,
-          ),
-        );
-      }
+      if (node['id'] == nodeId) return node;
     }
     throw const BundleException('Node is not in the saved configuration');
   }
+
+  Future<List<int>> _openNode(
+    VerifiedBundle bundle,
+    Map<String, dynamic> node,
+    String accountId,
+    String deviceId,
+    String nodeId,
+    List<int> deviceSeed,
+  ) => const CredentialBox().open(
+    encoded: node['encrypted_credentials'] as String,
+    deviceSeed: deviceSeed,
+    context: CredentialContext(
+      accountId: accountId,
+      deviceId: deviceId,
+      nodeId: nodeId,
+      version: bundle.version,
+    ),
+  );
 
   Future<void> clear() async {
     await _store.delete(_bundleKey);
