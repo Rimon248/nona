@@ -39,7 +39,7 @@ class NodeAccess {
           'vless_reality',
           'hysteria2',
         }) ||
-        decoded['schema_version'] != 1) {
+        decoded['schema_version'] != 2) {
       throw const NodeAccessException('Unsupported credential schema');
     }
     final declared = transports.toSet();
@@ -64,6 +64,7 @@ class NodeAccess {
               'user_id',
               'server_name',
               'reality_password',
+              'encryption',
               'short_id',
               'flow',
             }) ||
@@ -76,6 +77,7 @@ class NodeAccess {
           userId: vless['user_id'] as String,
           serverName: vless['server_name'] as String,
           realityPassword: vless['reality_password'] as String,
+          encryption: vless['encryption'] as String,
           shortId: vless['short_id'] as String,
           flow: vless['flow'] as String,
         );

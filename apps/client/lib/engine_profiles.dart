@@ -18,6 +18,9 @@ final _uuidPattern = RegExp(
 );
 final _realityKeyPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 final _shortIdPattern = RegExp(r'^(?:[0-9a-fA-F]{2}){0,8}$');
+final _vlessEncryptionPattern = RegExp(
+  r'^mlkem768x25519plus\.(?:native|xorpub|random)\.(?:1rtt|0rtt)\.([A-Za-z0-9_-]{43})$',
+);
 
 void _checkHost(String host) {
   if (host.isEmpty ||
@@ -47,6 +50,11 @@ bool _validRealityKey(String key) {
   }
 }
 
+bool _validVlessEncryption(String value) {
+  final match = _vlessEncryptionPattern.firstMatch(value);
+  return match != null && _validRealityKey(match.group(1)!);
+}
+
 void _checkPort(int port) {
   if (port < 1 || port > 65535) {
     throw const EngineProfileException('Invalid port');
@@ -63,6 +71,7 @@ class VlessRealityProfile {
     required this.userId,
     required this.serverName,
     required this.realityPassword,
+    required this.encryption,
     required this.shortId,
     this.flow = 'xtls-rprx-vision',
   }) {
@@ -71,6 +80,7 @@ class VlessRealityProfile {
     _checkPort(port);
     if (!_uuidPattern.hasMatch(userId) ||
         !_validRealityKey(realityPassword) ||
+        !_validVlessEncryption(encryption) ||
         !_shortIdPattern.hasMatch(shortId) ||
         !{'', 'xtls-rprx-vision', 'xtls-rprx-vision-udp443'}.contains(flow)) {
       throw const EngineProfileException('Invalid VLESS REALITY parameters');
@@ -84,6 +94,7 @@ class VlessRealityProfile {
 
   /// Xray's current REALITY `password` field is the server public key.
   final String realityPassword;
+  final String encryption;
   final String shortId;
   final String flow;
 
@@ -110,7 +121,7 @@ class VlessRealityProfile {
             'address': host,
             'port': port,
             'id': userId,
-            'encryption': 'none',
+            'encryption': encryption,
             if (flow.isNotEmpty) 'flow': flow,
           },
           'streamSettings': {
@@ -179,4 +190,49 @@ class Hysteria2Profile {
 
   String configJson({required int localSocksPort}) =>
       jsonEncode(config(localSocksPort: localSocksPort));
+
+  /// Xray's Hysteria2 transport shares the Android TUN runtime with VLESS.
+  Map<String, Object> xrayConfig({required int localSocksPort}) {
+    _checkPort(localSocksPort);
+    return {
+      'log': {'loglevel': 'warning', 'access': 'none'},
+      'inbounds': [
+        {
+          'tag': 'local-socks',
+          'listen': '127.0.0.1',
+          'port': localSocksPort,
+          'protocol': 'socks',
+          'settings': {'auth': 'noauth', 'udp': true, 'ip': '127.0.0.1'},
+        },
+      ],
+      'outbounds': [
+        {
+          'tag': 'proxy',
+          'protocol': 'hysteria',
+          'settings': {'version': 2, 'address': host, 'port': port},
+          'streamSettings': {
+            'method': 'hysteria',
+            'hysteriaSettings': {'version': 2, 'auth': auth},
+            'security': 'tls',
+            'tlsSettings': {
+              'serverName': serverName,
+              'alpn': ['h3'],
+            },
+            if (salamanderPassword != null)
+              'finalmask': {
+                'udp': [
+                  {
+                    'type': 'salamander',
+                    'settings': {'password': salamanderPassword!},
+                  },
+                ],
+              },
+          },
+        },
+      ],
+    };
+  }
+
+  String xrayConfigJson({required int localSocksPort}) =>
+      jsonEncode(xrayConfig(localSocksPort: localSocksPort));
 }

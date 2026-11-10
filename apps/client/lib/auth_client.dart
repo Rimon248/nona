@@ -125,6 +125,33 @@ class AuthClient {
       _oidc == null ? _tokens?.accountId : (signedIn ? _oidcAccountId : null);
   String? get username => _username;
 
+  String get _deviceSeedKey {
+    final identity = _oidc == null
+        ? _username?.trim().toLowerCase()
+        : _oidcAccountId;
+    if (!signedIn || identity == null || identity.isEmpty) {
+      throw const AuthException('Sign in required');
+    }
+    return 'nona.device_seed.v1.$identity';
+  }
+
+  /// Returns the device's local X25519 seed for a single in-memory decrypt.
+  /// Callers must clear the returned list immediately after use.
+  Future<List<int>> readDeviceSeed() async {
+    final encoded = await _store.read(_deviceSeedKey);
+    if (encoded == null) throw const AuthException('Device key is missing');
+    try {
+      final bytes = base64Url.decode(base64Url.normalize(encoded));
+      if (bytes.length == 32 &&
+          base64UrlEncode(bytes).replaceAll('=', '') == encoded) {
+        return bytes;
+      }
+    } on FormatException {
+      // Treat corrupt secure storage exactly like a missing key.
+    }
+    throw const AuthException('Invalid saved device key');
+  }
+
   Future<void> _initOidc() async {
     if (_oidcInitialized) return;
     await _oidc!.initialize();
@@ -297,13 +324,7 @@ class AuthClient {
   /// Saves an account-specific X25519 seed locally and sends only its public
   /// key. Rechecking the server list makes a lost POST response safe to retry.
   Future<String> ensureDeviceRegistered(String label) async {
-    final username = _username?.trim().toLowerCase();
-    if (!signedIn || username == null || username.isEmpty) {
-      throw const AuthException('Sign in required');
-    }
-    final keyName = _oidc == null
-        ? 'nona.device_seed.v1.$username'
-        : 'nona.device_seed.v1.$_oidcAccountId';
+    final keyName = _deviceSeedKey;
     final algorithm = X25519();
     var encodedSeed = await _store.read(keyName);
     if (encodedSeed == null) {

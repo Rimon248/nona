@@ -5,18 +5,23 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import libXray.DialerController
 import libXray.LibXray
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
 
-/** Android VPN service for the Xray VLESS+REALITY path.
+/** Android VPN service for Xray VLESS+REALITY and Hysteria2.
  * It never establishes a TUN unless a validated in-memory profile is supplied.
  * Android always-on is disabled until encrypted recovery is implemented.
  */
@@ -24,10 +29,30 @@ class NonaVpnService : VpnService() {
     companion object {
         private const val notificationChannel = "nona_vpn"
         private const val notificationId = 1001
+        private const val stopAction = "com.example.nona_client.STOP_VPN"
         private val pendingLock = Any()
         private var pendingProfile: String? = null
         @Volatile var state: String = "idle"
             private set
+
+        fun currentState(context: Context): String {
+            if (Build.VERSION.SDK_INT < 29) return state
+            val active = try {
+                val manager = context.getSystemService(ConnectivityManager::class.java)
+                manager.allNetworks.any { network ->
+                    val capabilities = manager.getNetworkCapabilities(network)
+                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true &&
+                        capabilities.ownerUid == context.applicationInfo.uid
+                }
+            } catch (_: SecurityException) {
+                return state
+            }
+            return when {
+                active && state == "idle" -> "error"
+                !active && state == "connected" -> "error"
+                else -> state
+            }
+        }
 
         fun start(context: Context, profileJson: String) {
             require(profileJson.length in 1..(1 shl 20)) { "Invalid profile size" }
@@ -49,7 +74,10 @@ class NonaVpnService : VpnService() {
 
         fun stop(context: Context) {
             synchronized(pendingLock) { pendingProfile = null }
-            context.stopService(Intent(context, NonaVpnService::class.java))
+            // Android keeps VpnService bound while its TUN is open. A plain
+            // stopService() only removes the started state and leaves the
+            // bound service (and VPN interface) alive.
+            context.startService(Intent(context, NonaVpnService::class.java).setAction(stopAction))
         }
     }
 
@@ -58,6 +86,17 @@ class NonaVpnService : VpnService() {
     @Volatile private var cancelled = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == stopAction) {
+            cancelled = true
+            state = "disconnecting"
+            worker.execute {
+                cleanup()
+                state = "idle"
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelfResult(startId)
+            }
+            return START_NOT_STICKY
+        }
         val profile = synchronized(pendingLock) {
             pendingProfile.also { pendingProfile = null }
         }
@@ -75,6 +114,7 @@ class NonaVpnService : VpnService() {
             return START_NOT_STICKY
         }
         state = "connecting"
+        cancelled = false
         worker.execute { connect(profile, startId) }
         return START_NOT_STICKY
     }
@@ -114,10 +154,35 @@ class NonaVpnService : VpnService() {
     }
 
     private fun requireSuccess(response: JSONObject) {
-        if (!response.optBoolean("success", false)) throw IllegalStateException("Xray rejected configuration")
+        if (!response.optBoolean("success", false)) {
+            val raw = response.optString("error", "").lowercase()
+            val markers = listOf(
+                "tun", "fd", "/dev/tun", "/dev/net/tun", "permission denied",
+                "operation not permitted", "network", "dns", "outbound", "inbound",
+                "unsupported", "unknown", "already running", "failed to start",
+                "failed to load", "failed to listen", "failed to open", "no such file",
+                "invalid", "gateway", "bind", "device or resource busy",
+            ).filter { raw.contains(it) }
+            Log.e("NonaVpnService", "Xray rejected startup; categories=${markers.joinToString(",")}; errorLength=${raw.length}")
+            if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                val safeWords = setOf(
+                    "failed", "to", "start", "proxy", "tun", "inbound", "permission", "denied",
+                    "set", "socket", "options", "bind", "interface", "file", "open", "build",
+                    "config", "system", "route", "connect", "protect", "fd", "listen", "device",
+                    "get", "network", "operation", "not", "found", "all", "create", "android",
+                    "cannot", "could", "service", "settings", "necessary", "the", "for", "on",
+                    "is", "in", "error", "from", "core", "internal", "transport", "read", "write",
+                )
+                val shape = Regex("[a-z]+").findAll(raw).take(100)
+                    .joinToString(" ") { if (it.value in safeWords) it.value else "_" }
+                Log.e("NonaVpnService", "Xray error shape: $shape")
+            }
+            throw IllegalStateException("Xray rejected configuration")
+        }
     }
 
     private fun connect(profile: String, startId: Int) {
+        var stage = "profile"
         try {
             if (cancelled) throw IllegalStateException("VPN was stopped")
             val config = JSONObject(profile)
@@ -127,12 +192,19 @@ class NonaVpnService : VpnService() {
             val inbound = inbounds.getJSONObject(0)
             val outbound = outbounds.getJSONObject(0)
             require(inbound.getString("protocol") == "socks" && inbound.getString("listen") == "127.0.0.1")
-            require(outbound.getString("protocol") == "vless")
-            require(outbound.getJSONObject("streamSettings").getString("security") == "reality")
+            val outboundProtocol = outbound.getString("protocol")
+            val streamSettings = outbound.getJSONObject("streamSettings")
+            require(
+                (outboundProtocol == "vless" && streamSettings.getString("security") == "reality") ||
+                    (outboundProtocol == "hysteria" && streamSettings.getString("security") == "tls" &&
+                        streamSettings.getJSONObject("hysteriaSettings").getInt("version") == 2),
+            )
             // Validate before Android routes any packet to the app.
+            stage = "xray-validation"
             requireSuccess(invoke("testXray", profile))
             if (cancelled) throw IllegalStateException("VPN was stopped")
 
+            stage = "underlying-network"
             val connectivity = getSystemService(ConnectivityManager::class.java)
             val network = connectivity.activeNetwork ?: throw IllegalStateException("No underlying network")
             val dns = connectivity.getLinkProperties(network)?.dnsServers?.firstOrNull()?.hostAddress
@@ -148,25 +220,55 @@ class NonaVpnService : VpnService() {
                 .addDnsServer("2606:4700:4700::1111")
             AndroidAppExclusions.applySaved(builder, this)
             if (cancelled) throw IllegalStateException("VPN was stopped")
+            stage = "vpn-interface"
             tunnel = builder.establish() ?: throw IllegalStateException("Android refused VPN interface")
 
             val controller = object : DialerController {
-                override fun protectFd(fd: Long): Boolean = protect(fd.toInt())
+                override fun protectFd(fd: Long): Boolean {
+                    return protect(fd.toInt())
+                }
             }
             LibXray.registerDialerController(controller)
             LibXray.setDNS(controller, "${if (dns.contains(':')) "[$dns]" else dns}:53")
             val tunConfig = JSONObject(profile)
-            tunConfig.put("inbounds", JSONArray().put(
+            val nativeInbounds = JSONArray().put(
                 JSONObject()
                     .put("tag", "tun-in")
                     .put("protocol", "tun")
-                    .put("settings", JSONObject().put("mtu", 1280)),
-            ))
+                    // A nonempty name keeps Xray's config builder from calling
+                    // net.Interfaces(), which Android denies to this app. The
+                    // actual interface is the fd supplied by VpnService.
+                    .put("settings", JSONObject().put("name", "tun0").put("mtu", 1280)),
+            )
+            tunConfig.put("inbounds", nativeInbounds)
             tunConfig.put("env", JSONObject().put("xray.tun.fd", tunnel!!.fd.toString()))
+            stage = "xray-start"
             requireSuccess(invoke("runXray", tunConfig.toString()))
             if (cancelled) throw IllegalStateException("VPN was stopped")
+            stage = "xray-state"
             val running = invoke("getXrayState").optJSONObject("data")?.optBoolean("running") == true
             if (!running) throw IllegalStateException("Xray did not start")
+            stage = "traffic-check"
+            val vpnNetwork = (0 until 15).firstNotNullOfOrNull {
+                connectivity.allNetworks.firstOrNull { candidate ->
+                    val capabilities = connectivity.getNetworkCapabilities(candidate)
+                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true &&
+                        (Build.VERSION.SDK_INT < 29 || capabilities.ownerUid == applicationInfo.uid) &&
+                        connectivity.activeNetwork == candidate
+                }.also { if (it == null) Thread.sleep(200) }
+            } ?: throw IllegalStateException("Android VPN network is unavailable")
+            if (connectivity.activeNetwork != vpnNetwork) {
+                throw IllegalStateException("VPN is not the application's default network")
+            }
+            val probe = URL("https://1.1.1.1/").openConnection() as HttpURLConnection
+            try {
+                probe.connectTimeout = 5000
+                probe.readTimeout = 5000
+                probe.instanceFollowRedirects = false
+                if (probe.responseCode !in 200..399) throw IllegalStateException("VPN traffic check failed")
+            } finally {
+                probe.disconnect()
+            }
             state = "connected"
             val notificationBuilder = if (Build.VERSION.SDK_INT >= 26) {
                 Notification.Builder(this, notificationChannel)
@@ -181,7 +283,10 @@ class NonaVpnService : VpnService() {
                 .setOngoing(true)
                 .build()
             getSystemService(NotificationManager::class.java).notify(notificationId, notification)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            // Only the stage and exception type are logged. Native errors may
+            // contain credential material and must never reach Android logs.
+            Log.e("NonaVpnService", "VPN setup failed at $stage (${error.javaClass.simpleName})")
             state = "error"
             cleanup()
             stopSelf(startId)

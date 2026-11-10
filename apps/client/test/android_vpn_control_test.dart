@@ -18,6 +18,7 @@ void main() {
     userId: '00000000-0000-4000-8000-000000000001',
     serverName: 'front.example.invalid',
     realityPassword: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    encryption: 'mlkem768x25519plus.native.1rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     shortId: 'a1b2c3d4',
   );
 
@@ -45,5 +46,32 @@ void main() {
     final config = jsonDecode(submitted!) as Map<String, dynamic>;
     expect((config['inbounds'] as List).single['listen'], '127.0.0.1');
     expect((config['outbounds'] as List).single['protocol'], 'vless');
+  });
+
+  test('Hysteria2 uses Xray transport on Android', () async {
+    String? submitted;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'prepare') return true;
+      if (call.method == 'start') {
+        submitted = (call.arguments as Map)['config'] as String;
+        return null;
+      }
+      throw MissingPluginException();
+    });
+    final profile = Hysteria2Profile(
+      host: 'node.example.invalid',
+      port: 443,
+      auth: 'fictional-password',
+      serverName: 'node.example.invalid',
+      salamanderPassword: 'fictional-mask',
+    );
+    expect(await AndroidVpnControl(channel).connectHysteria(profile), isTrue);
+    final config = jsonDecode(submitted!) as Map<String, dynamic>;
+    final outbound = (config['outbounds'] as List).single as Map;
+    expect(outbound['protocol'], 'hysteria');
+    expect(
+      ((outbound['streamSettings'] as Map)['finalmask'] as Map)['udp'],
+      isNotEmpty,
+    );
   });
 }

@@ -34,6 +34,7 @@ type provisionSettings struct {
 		Port             int    `json:"port"`
 		ServerName       string `json:"server_name"`
 		RealityPublicKey string `json:"reality_public_key"`
+		ClientEncryption string `json:"client_encryption"`
 		ShortID          string `json:"short_id"`
 	} `json:"vless_reality"`
 	Hysteria struct {
@@ -80,7 +81,15 @@ func validHost(value string) bool {
 func validSettings(settings provisionSettings) bool {
 	key, err := base64.RawURLEncoding.DecodeString(settings.VLESS.RealityPublicKey)
 	short, shortErr := hex.DecodeString(settings.VLESS.ShortID)
-	return validHost(settings.Host) && validHost(settings.VLESS.ServerName) && validHost(settings.Hysteria.ServerName) &&
+	parts := strings.Split(settings.VLESS.ClientEncryption, ".")
+	encryptionValid := len(parts) == 4 && parts[0] == "mlkem768x25519plus" &&
+		(parts[1] == "native" || parts[1] == "xorpub" || parts[1] == "random") &&
+		(parts[2] == "1rtt" || parts[2] == "0rtt")
+	if encryptionValid {
+		public, decodeErr := base64.RawURLEncoding.DecodeString(parts[3])
+		encryptionValid = decodeErr == nil && len(public) == 32 && base64.RawURLEncoding.EncodeToString(public) == parts[3]
+	}
+	return encryptionValid && validHost(settings.Host) && validHost(settings.VLESS.ServerName) && validHost(settings.Hysteria.ServerName) &&
 		settings.VLESS.Port > 0 && settings.VLESS.Port <= 65535 && settings.Hysteria.Port > 0 && settings.Hysteria.Port <= 65535 &&
 		settings.VLESS.InboundID > 0 && settings.Hysteria.InboundID > 0 && settings.VLESS.InboundID != settings.Hysteria.InboundID &&
 		err == nil && len(key) == 32 && base64.RawURLEncoding.EncodeToString(key) == settings.VLESS.RealityPublicKey &&
@@ -198,10 +207,11 @@ func provisionDevice(pool *pgxpool.Pool, service *auth.Service, accountID, devic
 		return errors.New("VPN client is incomplete")
 	}
 	access, err := json.Marshal(map[string]any{
-		"schema_version": 1,
+		"schema_version": 2,
 		"vless_reality": map[string]any{"host": settings.Host, "port": settings.VLESS.Port,
 			"user_id": record.UUID, "server_name": settings.VLESS.ServerName,
-			"reality_password": settings.VLESS.RealityPublicKey, "short_id": settings.VLESS.ShortID, "flow": record.Flow},
+			"reality_password": settings.VLESS.RealityPublicKey, "encryption": settings.VLESS.ClientEncryption,
+			"short_id": settings.VLESS.ShortID, "flow": record.Flow},
 		"hysteria2": map[string]any{"host": settings.Host, "port": settings.Hysteria.Port,
 			"auth": record.Auth, "server_name": settings.Hysteria.ServerName,
 			"obfs_password": settings.Hysteria.ObfsPassword},

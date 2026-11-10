@@ -29,6 +29,7 @@ type accessDocument struct {
 		UserID          string `json:"user_id"`
 		ServerName      string `json:"server_name"`
 		RealityPassword string `json:"reality_password"`
+		Encryption      string `json:"encryption"`
 		ShortID         string `json:"short_id"`
 		Flow            string `json:"flow"`
 	} `json:"vless_reality"`
@@ -48,7 +49,7 @@ func validateAccess(node PlainNode) error {
 	var doc accessDocument
 	decoder := json.NewDecoder(bytes.NewReader(node.Access))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&doc); err != nil || doc.SchemaVersion != 1 {
+	if err := decoder.Decode(&doc); err != nil || doc.SchemaVersion != 2 {
 		return errors.New("invalid access document")
 	}
 	var trailing any
@@ -67,7 +68,7 @@ func validateAccess(node PlainNode) error {
 		declared["hysteria2"] != (doc.Hysteria != nil) ||
 		(doc.VLESS != nil && doc.VLESS.Host != node.Endpoint) ||
 		(doc.Hysteria != nil && doc.Hysteria.Host != node.Endpoint) ||
-		(doc.VLESS != nil && (doc.VLESS.Port < 1 || doc.VLESS.Port > 65535 || doc.VLESS.UserID == "" || doc.VLESS.ServerName == "" || doc.VLESS.RealityPassword == "")) ||
+		(doc.VLESS != nil && (doc.VLESS.Port < 1 || doc.VLESS.Port > 65535 || doc.VLESS.UserID == "" || doc.VLESS.ServerName == "" || doc.VLESS.RealityPassword == "" || doc.VLESS.Encryption == "")) ||
 		(doc.Hysteria != nil && (doc.Hysteria.Port < 1 || doc.Hysteria.Port > 65535 || doc.Hysteria.Auth == "" || doc.Hysteria.ServerName == "")) {
 		return errors.New("access metadata mismatch")
 	}

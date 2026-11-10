@@ -12,11 +12,17 @@ class AndroidVpnControl {
 
   /// Returns false if the user declines Android's system VPN consent.
   Future<bool> connect(VlessRealityProfile profile) async {
+    return _connect(profile.configJson(localSocksPort: 10808));
+  }
+
+  Future<bool> connectHysteria(Hysteria2Profile profile) async {
+    return _connect(profile.xrayConfigJson(localSocksPort: 10808));
+  }
+
+  Future<bool> _connect(String config) async {
     final allowed = await _channel.invokeMethod<bool>('prepare') ?? false;
     if (!allowed) return false;
-    await _channel.invokeMethod<void>('start', {
-      'config': profile.configJson(localSocksPort: 10808),
-    });
+    await _channel.invokeMethod<void>('start', {'config': config});
     return true;
   }
 

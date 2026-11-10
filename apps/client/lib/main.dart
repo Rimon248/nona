@@ -7,6 +7,7 @@ import 'package:oidc/oidc.dart';
 import 'package:oidc_default_store/oidc_default_store.dart';
 
 import 'android_app_routing_screen.dart';
+import 'android_vpn_control.dart';
 import 'auth_client.dart';
 import 'config_bundle.dart';
 import 'configuration_sync.dart';
@@ -53,10 +54,13 @@ class _HomeScreenState extends State<HomeScreen> {
   OidcUserManager? _oidc;
   AuthClient? _auth;
   ConfigurationVault? _vault;
+  final AndroidVpnControl _androidVpn = AndroidVpnControl();
   String? _deviceId;
   String? _message;
   String _configurationMessage = 'На этом устройстве пока не сохранены';
   bool _busy = false;
+  String _vpnState = 'idle';
+  String? _vpnTransport;
 
   @override
   void initState() {
@@ -115,6 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     _restore();
+    if (defaultTargetPlatform == TargetPlatform.android) _refreshVpnState();
   }
 
   @override
@@ -201,6 +206,133 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() => _busy = false);
   }
 
+  Future<void> _refreshVpnState() async {
+    try {
+      final state = await _androidVpn.status();
+      if (mounted) setState(() => _vpnState = state);
+    } catch (_) {
+      if (mounted) setState(() => _vpnState = 'error');
+    }
+  }
+
+  Future<void> _connectVpn() async {
+    final auth = _auth;
+    final vault = _vault;
+    final accountId = auth?.accountId;
+    final deviceId = _deviceId;
+    if (auth == null ||
+        vault == null ||
+        accountId == null ||
+        deviceId == null) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    List<int>? seed;
+    try {
+      final bundle = await vault.load(
+        accountId: accountId,
+        deviceId: deviceId,
+        now: DateTime.now(),
+      );
+      if (bundle == null) throw const BundleException('No saved configuration');
+      final nodes = bundle.payload['nodes'] as List;
+      seed = await auth.readDeviceSeed();
+      var connected = false;
+      var declined = false;
+      nodeLoop:
+      for (final rawNode in nodes) {
+        final nodeId = (rawNode as Map<String, dynamic>)['id'] as String;
+        final access = await vault.openNodeAccess(
+          accountId: accountId,
+          deviceId: deviceId,
+          nodeId: nodeId,
+          deviceSeed: seed,
+          now: DateTime.now(),
+        );
+        final candidates = <({String name, Future<bool> Function() start})>[
+          if (access.hysteria2 != null)
+            (
+              name: 'Hysteria2',
+              start: () => _androidVpn.connectHysteria(access.hysteria2!),
+            ),
+          if (access.vlessReality != null)
+            (
+              name: 'VLESS',
+              start: () => _androidVpn.connect(access.vlessReality!),
+            ),
+        ];
+        for (final candidate in candidates) {
+          final result = await _attemptVpn(candidate.start);
+          if (result == null) {
+            declined = true;
+            break nodeLoop;
+          }
+          if (result) {
+            _vpnTransport = candidate.name;
+            connected = true;
+            break nodeLoop;
+          }
+        }
+      }
+      if (!connected) {
+        _message = declined
+            ? 'Подключение отменено в настройках Android'
+            : 'Ни один VPN-канал сейчас не отвечает';
+      }
+    } catch (_) {
+      _message = 'Не удалось открыть конфигурацию или запустить VPN';
+    } finally {
+      if (seed != null) seed.fillRange(0, seed.length, 0);
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// A native connection is accepted only after it passes a request through
+  /// the VPN network. The service reports an error and closes its TUN on fail.
+  Future<bool?> _attemptVpn(Future<bool> Function() start) async {
+    try {
+      if (!await start()) return null;
+      for (var attempt = 0; attempt < 30; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        _vpnState = await _androidVpn.status();
+        if (_vpnState == 'connected') return true;
+        if (_vpnState == 'error') break;
+      }
+    } catch (_) {
+      // Try the next transport after the current service has been stopped.
+    }
+    await _androidVpn.stop();
+    for (var attempt = 0; attempt < 20; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      _vpnState = await _androidVpn.status();
+      if (_vpnState == 'idle') return false;
+    }
+    throw StateError('Android VPN did not stop');
+  }
+
+  Future<void> _disconnectVpn() async {
+    setState(() => _busy = true);
+    try {
+      await _androidVpn.stop();
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        _vpnState = await _androidVpn.status();
+        if (_vpnState == 'idle') break;
+      }
+      _message = _vpnState == 'idle'
+          ? null
+          : 'Android ещё завершает VPN. Повторите отключение.';
+      if (_vpnState == 'idle') _vpnTransport = null;
+    } catch (_) {
+      _message = 'Не удалось остановить VPN';
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _retryDevice() async {
     final auth = _auth;
     if (auth == null || !auth.signedIn) return;
@@ -243,6 +375,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _message = null;
     });
     try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await _androidVpn.stop();
+        _vpnState = 'idle';
+      }
       await auth.logout();
       await _vault?.clear();
       _deviceId = null;
@@ -347,24 +483,44 @@ class _HomeScreenState extends State<HomeScreen> {
                       Row(
                         children: [
                           Icon(
-                            Icons.pause_circle_outline,
+                            _vpnState == 'connected'
+                                ? Icons.shield
+                                : Icons.pause_circle_outline,
                             color: scheme.primary,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: Text(
-                              'Соединение не настроено',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
+                            child: Text(switch (_vpnState) {
+                              'connected' =>
+                                _vpnTransport == null
+                                    ? 'VPN подключён'
+                                    : 'VPN подключён · $_vpnTransport',
+                              'connecting' => 'Подключение VPN',
+                              'disconnecting' => 'Отключение VPN',
+                              'error' => 'Ошибка подключения',
+                              _ => 'VPN не подключён',
+                            }, style: Theme.of(context).textTheme.titleLarge),
                           ),
                         ],
                       ),
                       const SizedBox(height: 16),
-                      const Text(
-                        'Вход и проверка обновлений доступны при настроенном '
-                        'сервере. VPN-подключение появится после автоматической '
-                        'выдачи данных доступа и проверки сетевого модуля.',
-                      ),
+                      if (defaultTargetPlatform == TargetPlatform.android &&
+                          _deviceId != null &&
+                          _vault != null) ...[
+                        FilledButton(
+                          onPressed: _busy
+                              ? null
+                              : (_vpnState != 'idle'
+                                    ? _disconnectVpn
+                                    : _connectVpn),
+                          child: Text(
+                            _vpnState != 'idle' ? 'Отключить' : 'Подключить',
+                          ),
+                        ),
+                      ] else
+                        const Text(
+                          'Подключение появится после входа и получения конфигурации.',
+                        ),
                     ],
                   ),
                 ),

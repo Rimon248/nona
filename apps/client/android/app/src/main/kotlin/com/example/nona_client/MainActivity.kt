@@ -69,7 +69,7 @@ class MainActivity : FlutterFragmentActivity() {
                             }
                         }
                     }
-                    "status" -> result.success(NonaVpnService.state)
+                    "status" -> result.success(NonaVpnService.currentState(this))
                     "stop" -> {
                         NonaVpnService.stop(this)
                         result.success(null)

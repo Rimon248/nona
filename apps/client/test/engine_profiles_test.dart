@@ -9,6 +9,7 @@ void main() {
       userId: '00000000-0000-4000-8000-000000000001',
       serverName: 'front.example.invalid',
       realityPassword: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      encryption: 'mlkem768x25519plus.native.1rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       shortId: 'a1b2c3d4',
     );
     final config = profile.config(localSocksPort: 10808);
@@ -16,6 +17,7 @@ void main() {
     final stream = outbound['streamSettings'] as Map;
     expect(profile.core, NativeCore.xray);
     expect(stream['security'], 'reality');
+    expect((outbound['settings'] as Map)['encryption'], profile.encryption);
     expect(
       (stream['realitySettings'] as Map)['password'],
       profile.realityPassword,
@@ -39,6 +41,15 @@ void main() {
     expect(config['server'], '[2001:db8::1]:8443');
     expect((config['tls'] as Map)['insecure'], false);
     expect((config['socks5'] as Map)['listen'], '127.0.0.1:10809');
+    final xray = profile.xrayConfig(localSocksPort: 10809);
+    final outbound = (xray['outbounds'] as List).single as Map;
+    expect(outbound['protocol'], 'hysteria');
+    expect((outbound['streamSettings'] as Map)['security'], 'tls');
+    expect(
+      ((outbound['streamSettings'] as Map)['hysteriaSettings']
+          as Map)['version'],
+      2,
+    );
   });
 
   test('rejects malformed addresses and REALITY short IDs', () {
@@ -49,6 +60,7 @@ void main() {
         userId: '00000000-0000-4000-8000-000000000001',
         serverName: 'front.example.invalid',
         realityPassword: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        encryption: 'none',
         shortId: 'abc',
       ),
       throwsA(isA<EngineProfileException>()),

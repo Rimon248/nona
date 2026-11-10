@@ -5,13 +5,14 @@ import 'package:nona_client/node_access.dart';
 
 void main() {
   final valid = {
-    'schema_version': 1,
+    'schema_version': 2,
     'vless_reality': {
       'host': 'node.example.invalid',
       'port': 8443,
       'user_id': '00000000-0000-4000-8000-000000000001',
       'server_name': 'front.example.invalid',
       'reality_password': 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      'encryption': 'mlkem768x25519plus.native.1rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       'short_id': 'a1b2c3d4',
       'flow': 'xtls-rprx-vision',
     },

@@ -25,6 +25,7 @@ func TestProvisionSettingsRejectInvalidMetadataBeforeNodeMutation(t *testing.T) 
 	settings.VLESS.Port = 8443
 	settings.VLESS.ServerName = "front.example.invalid"
 	settings.VLESS.RealityPublicKey = base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	settings.VLESS.ClientEncryption = "mlkem768x25519plus.native.1rtt." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	settings.VLESS.ShortID = "a1b2"
 	settings.Hysteria.InboundID = 1
 	settings.Hysteria.Port = 443
