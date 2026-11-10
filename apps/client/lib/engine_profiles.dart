@@ -129,7 +129,7 @@ class VlessRealityProfile {
             'security': 'reality',
             'realitySettings': {
               'serverName': serverName,
-              'fingerprint': 'chrome',
+              'fingerprint': 'safari',
               'password': realityPassword,
               'shortId': shortId,
             },

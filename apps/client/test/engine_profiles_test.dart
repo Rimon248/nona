@@ -18,6 +18,7 @@ void main() {
     expect(profile.core, NativeCore.xray);
     expect(stream['security'], 'reality');
     expect((outbound['settings'] as Map)['encryption'], profile.encryption);
+    expect((stream['realitySettings'] as Map)['fingerprint'], 'safari');
     expect(
       (stream['realitySettings'] as Map)['password'],
       profile.realityPassword,
