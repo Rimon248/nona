@@ -74,4 +74,19 @@ void main() {
       isNotEmpty,
     );
   });
+
+  test('latency result comes from the Android VPN service', () async {
+    final methods = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      return 87;
+    });
+    expect(await AndroidVpnControl(channel).measureLatency(), 87);
+    expect(methods, ['measureLatency']);
+  });
+
+  test('invalid latency result is never displayed', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async => 0);
+    expect(AndroidVpnControl(channel).measureLatency(), throwsStateError);
+  });
 }

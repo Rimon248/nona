@@ -12,6 +12,7 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import libXray.DialerController
 import libXray.LibXray
@@ -36,7 +37,7 @@ class NonaVpnService : VpnService() {
             private set
 
         fun currentState(context: Context): String {
-            if (Build.VERSION.SDK_INT < 29) return state
+            if (Build.VERSION.SDK_INT < 30) return state
             val active = try {
                 val manager = context.getSystemService(ConnectivityManager::class.java)
                 manager.allNetworks.any { network ->
@@ -52,6 +53,42 @@ class NonaVpnService : VpnService() {
                 !active && state == "connected" -> "error"
                 else -> state
             }
+        }
+
+        fun measureLatency(context: Context): Int {
+            check(currentState(context) == "connected") { "VPN is not connected" }
+            val connectivity = context.getSystemService(ConnectivityManager::class.java)
+            val vpnNetwork = connectivity.activeNetwork ?: throw IllegalStateException("No active VPN network")
+            fun isCurrentVpn(): Boolean {
+                val capabilities = connectivity.getNetworkCapabilities(vpnNetwork)
+                return connectivity.activeNetwork == vpnNetwork &&
+                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true &&
+                    (Build.VERSION.SDK_INT < 30 || capabilities.ownerUid == context.applicationInfo.uid) &&
+                    state == "connected"
+            }
+            check(isCurrentVpn()) { "VPN is not the default network" }
+            val samples = ArrayList<Int>(3)
+            repeat(3) {
+                check(isCurrentVpn()) { "VPN changed during measurement" }
+                val started = SystemClock.elapsedRealtimeNanos()
+                val probe = URL("https://1.1.1.1/").openConnection() as HttpURLConnection
+                try {
+                    probe.connectTimeout = 5000
+                    probe.readTimeout = 5000
+                    probe.instanceFollowRedirects = false
+                    probe.useCaches = false
+                    if (probe.responseCode !in 200..399) {
+                        throw IllegalStateException("VPN traffic check failed")
+                    }
+                    check(isCurrentVpn()) { "VPN changed during measurement" }
+                    samples.add(((SystemClock.elapsedRealtimeNanos() - started) / 1_000_000L)
+                        .coerceIn(1L, Int.MAX_VALUE.toLong()).toInt())
+                } finally {
+                    probe.disconnect()
+                }
+            }
+            samples.sort()
+            return samples[1]
         }
 
         fun start(context: Context, profileJson: String) {
@@ -253,7 +290,7 @@ class NonaVpnService : VpnService() {
                 connectivity.allNetworks.firstOrNull { candidate ->
                     val capabilities = connectivity.getNetworkCapabilities(candidate)
                     capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true &&
-                        (Build.VERSION.SDK_INT < 29 || capabilities.ownerUid == applicationInfo.uid) &&
+                        (Build.VERSION.SDK_INT < 30 || capabilities.ownerUid == applicationInfo.uid) &&
                         connectivity.activeNetwork == candidate
                 }.also { if (it == null) Thread.sleep(200) }
             } ?: throw IllegalStateException("Android VPN network is unavailable")

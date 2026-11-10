@@ -29,5 +29,14 @@ class AndroidVpnControl {
   Future<String> status() async =>
       await _channel.invokeMethod<String>('status') ?? 'error';
 
+  /// Median HTTPS response time through the currently active Nona VPN.
+  Future<int> measureLatency() async {
+    final milliseconds = await _channel.invokeMethod<int>('measureLatency');
+    if (milliseconds == null || milliseconds < 1) {
+      throw StateError('Invalid VPN latency result');
+    }
+    return milliseconds;
+  }
+
   Future<void> stop() => _channel.invokeMethod<void>('stop');
 }

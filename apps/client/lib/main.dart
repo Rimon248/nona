@@ -61,6 +61,10 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
   String _vpnState = 'idle';
   String? _vpnTransport;
+  int? _latencyMs;
+  bool _measuringLatency = false;
+  String? _latencyMessage;
+  int _latencyRequestId = 0;
 
   @override
   void initState() {
@@ -229,6 +233,10 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _busy = true;
       _message = null;
+      _latencyMs = null;
+      _latencyMessage = null;
+      _measuringLatency = false;
+      _latencyRequestId++;
     });
     List<int>? seed;
     try {
@@ -314,7 +322,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _disconnectVpn() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _latencyMs = null;
+      _latencyMessage = null;
+      _measuringLatency = false;
+      _latencyRequestId++;
+    });
     try {
       await _androidVpn.stop();
       for (var attempt = 0; attempt < 20; attempt++) {
@@ -330,6 +344,40 @@ class _HomeScreenState extends State<HomeScreen> {
       _message = 'Не удалось остановить VPN';
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _measureVpnLatency() async {
+    if (_measuringLatency || _busy || _vpnState != 'connected') return;
+    final requestId = ++_latencyRequestId;
+    setState(() {
+      _measuringLatency = true;
+      _latencyMs = null;
+      _latencyMessage = null;
+    });
+    try {
+      final milliseconds = await _androidVpn.measureLatency();
+      final state = await _androidVpn.status();
+      if (!mounted || requestId != _latencyRequestId) return;
+      setState(() {
+        _vpnState = state;
+        if (state == 'connected') {
+          _latencyMs = milliseconds;
+        } else {
+          _latencyMessage = 'VPN отключился во время проверки';
+        }
+      });
+    } catch (_) {
+      if (mounted && requestId == _latencyRequestId) {
+        setState(
+          () => _latencyMessage =
+              'Не удалось измерить задержку. Проверьте VPN и повторите.',
+        );
+      }
+    } finally {
+      if (mounted && requestId == _latencyRequestId) {
+        setState(() => _measuringLatency = false);
+      }
     }
   }
 
@@ -373,6 +421,10 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _busy = true;
       _message = null;
+      _latencyMs = null;
+      _latencyMessage = null;
+      _measuringLatency = false;
+      _latencyRequestId++;
     });
     try {
       if (defaultTargetPlatform == TargetPlatform.android) {
@@ -517,6 +569,41 @@ class _HomeScreenState extends State<HomeScreen> {
                             _vpnState != 'idle' ? 'Отключить' : 'Подключить',
                           ),
                         ),
+                        if (_vpnState == 'connected') ...[
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _busy || _measuringLatency
+                                ? null
+                                : _measureVpnLatency,
+                            icon: _measuringLatency
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.speed_outlined),
+                            label: Text(
+                              _measuringLatency
+                                  ? 'Проверяем задержку…'
+                                  : 'Проверить пинг',
+                            ),
+                          ),
+                          if (_latencyMs != null) ...[
+                            const SizedBox(height: 8),
+                            Text('Задержка через VPN: $_latencyMs мс'),
+                          ],
+                          if (_latencyMessage != null) ...[
+                            const SizedBox(height: 8),
+                            Text(_latencyMessage!),
+                          ],
+                          const SizedBox(height: 4),
+                          Text(
+                            'Время ответа HTTPS-сайта через VPN, не пинг сервера.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
                       ] else
                         const Text(
                           'Подключение появится после входа и получения конфигурации.',

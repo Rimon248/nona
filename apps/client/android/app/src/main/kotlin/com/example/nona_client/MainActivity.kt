@@ -70,6 +70,18 @@ class MainActivity : FlutterFragmentActivity() {
                         }
                     }
                     "status" -> result.success(NonaVpnService.currentState(this))
+                    "measureLatency" -> {
+                        Thread({
+                            try {
+                                val milliseconds = NonaVpnService.measureLatency(this)
+                                runOnUiThread { result.success(milliseconds) }
+                            } catch (_: Exception) {
+                                runOnUiThread {
+                                    result.error("LATENCY_FAILED", "Could not measure VPN latency", null)
+                                }
+                            }
+                        }, "nona-latency").start()
+                    }
                     "stop" -> {
                         NonaVpnService.stop(this)
                         result.success(null)
