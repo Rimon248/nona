@@ -166,8 +166,11 @@ func provisionDevice(pool *pgxpool.Pool, service *auth.Service, accountID, devic
 	var devicePublic []byte
 	var previousVersion int64
 	err = guard.QueryRow(ctx, `SELECT d.public_key, COALESCE(c.version,0) FROM devices d
+		JOIN accounts a ON a.id=d.account_id
 		LEFT JOIN device_configurations c ON c.device_id=d.id
-		WHERE d.id=$1 AND d.account_id=$2 AND d.revoked_at IS NULL`, deviceID, accountID).Scan(&devicePublic, &previousVersion)
+		WHERE d.id=$1 AND d.account_id=$2 AND d.revoked_at IS NULL
+		AND (a.oidc_subject IS NULL OR a.vpn_access_status='approved')
+		FOR SHARE OF a`, deviceID, accountID).Scan(&devicePublic, &previousVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errors.New("active device not found")
 	}

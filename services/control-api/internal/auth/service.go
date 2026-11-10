@@ -56,17 +56,22 @@ func NewService(pool *pgxpool.Pool) (*Service, error) {
 
 // AuthenticateOIDC links a verified Keycloak subject to one local account.
 // The caller must verify the JWT signature, issuer, audience and client first.
-func (s *Service) AuthenticateOIDC(ctx context.Context, subject string) (Session, error) {
+func (s *Service) AuthenticateOIDC(ctx context.Context, subject, username string) (Session, error) {
 	if subject == "" || len(subject) > 256 {
+		return Session{}, ErrInvalidCredentials
+	}
+	username = strings.TrimSpace(username)
+	if len(username) < 1 || len(username) > 128 || strings.ContainsAny(username, "\x00\r\n") {
 		return Session{}, ErrInvalidCredentials
 	}
 	id, err := newID()
 	if err != nil {
 		return Session{}, err
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO accounts (id, username, password_hash, oidc_subject)
-		VALUES ($1, $2, $3, $4) ON CONFLICT (oidc_subject) WHERE oidc_subject IS NOT NULL DO NOTHING`,
-		id, "oidc:"+subject, "oidc-managed", subject)
+	_, err = s.pool.Exec(ctx, `INSERT INTO accounts (id, username, password_hash, oidc_subject, display_username)
+		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (oidc_subject) WHERE oidc_subject IS NOT NULL
+		DO UPDATE SET display_username=EXCLUDED.display_username`,
+		id, "oidc:"+subject, "oidc-managed", subject, username)
 	if err != nil {
 		return Session{}, err
 	}
@@ -82,14 +87,14 @@ func (s *Service) AuthenticateOIDC(ctx context.Context, subject string) (Session
 }
 
 func (s *Service) CheckOIDCSchema(ctx context.Context) error {
-	var exists bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
-		WHERE table_name='accounts' AND column_name='oidc_subject')`).Scan(&exists)
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns
+		WHERE table_name='accounts' AND column_name IN ('oidc_subject','display_username','vpn_access_status')`).Scan(&count)
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return errors.New("OIDC migration is missing")
+	if count != 3 {
+		return errors.New("OIDC or VPN access migration is missing")
 	}
 	return nil
 }

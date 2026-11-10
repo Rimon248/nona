@@ -27,11 +27,12 @@ type Identity struct {
 // Verifier accepts only Keycloak RS256 access tokens for this API and client.
 // The JWKS URL is fixed by the operator, never taken from an untrusted token.
 type Verifier struct {
-	Issuer   string
-	Audience string
-	ClientID string
-	JWKSURL  string
-	HTTP     *http.Client
+	Issuer       string
+	Audience     string
+	ClientID     string
+	RequiredRole string
+	JWKSURL      string
+	HTTP         *http.Client
 
 	mu          sync.Mutex
 	keys        map[string]*rsa.PublicKey
@@ -161,14 +162,17 @@ func (v *Verifier) Verify(ctx context.Context, token string, now time.Time) (Ide
 		return Identity{}, ErrInvalidToken
 	}
 	var claims struct {
-		Issuer    string          `json:"iss"`
-		Audience  json.RawMessage `json:"aud"`
-		ClientID  string          `json:"azp"`
-		Subject   string          `json:"sub"`
-		Username  string          `json:"preferred_username"`
-		Expires   int64           `json:"exp"`
-		NotBefore int64           `json:"nbf"`
-		IssuedAt  int64           `json:"iat"`
+		Issuer      string          `json:"iss"`
+		Audience    json.RawMessage `json:"aud"`
+		ClientID    string          `json:"azp"`
+		Subject     string          `json:"sub"`
+		Username    string          `json:"preferred_username"`
+		Expires     int64           `json:"exp"`
+		NotBefore   int64           `json:"nbf"`
+		IssuedAt    int64           `json:"iat"`
+		RealmAccess struct {
+			Roles []string `json:"roles"`
+		} `json:"realm_access"`
 	}
 	if json.Unmarshal(payloadBytes, &claims) != nil || claims.Issuer != v.Issuer ||
 		!audienceContains(claims.Audience, v.Audience) || claims.ClientID != v.ClientID ||
@@ -176,6 +180,18 @@ func (v *Verifier) Verify(ctx context.Context, token string, now time.Time) (Ide
 		claims.Expires <= now.Unix() || claims.IssuedAt <= 0 || claims.IssuedAt > now.Add(time.Minute).Unix() ||
 		claims.NotBefore > now.Unix() {
 		return Identity{}, ErrInvalidToken
+	}
+	if v.RequiredRole != "" {
+		found := false
+		for _, role := range claims.RealmAccess.Roles {
+			if role == v.RequiredRole {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Identity{}, ErrInvalidToken
+		}
 	}
 	return Identity{Subject: claims.Subject, Username: claims.Username}, nil
 }

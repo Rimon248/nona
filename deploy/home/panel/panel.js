@@ -5,6 +5,9 @@ const states = {
 };
 const checked = document.getElementById('checked');
 const button = document.getElementById('refresh');
+const usersButton = document.getElementById('refresh-users');
+const usersList = document.getElementById('users-list');
+const usersMessage = document.getElementById('users-message');
 function show(element, label, kind) {
   element.textContent = label;
   element.className = 'state ' + kind;
@@ -35,3 +38,93 @@ async function refresh() {
 }
 button.addEventListener('click', refresh);
 refresh();
+
+const accessLabels = {
+  pending: 'Ожидает решения', approved: 'Доступ разрешён',
+  revoking: 'Отзываем доступ', denied: 'Без доступа'
+};
+function userRow(user, canManageOperators) {
+  const row = document.createElement('div');
+  row.className = 'user-row';
+  const identity = document.createElement('div');
+  identity.className = 'user-identity';
+  const name = document.createElement('strong');
+  name.textContent = user.username;
+  const detail = document.createElement('small');
+  detail.textContent = `${user.active_devices} устройств · ${user.ready_devices} готовы`;
+  if (user.operator) detail.textContent += ' · Администратор';
+  identity.append(name, detail);
+  const status = document.createElement('span');
+  status.className = `access-status ${user.status}`;
+  status.textContent = accessLabels[user.status] || 'Неизвестно';
+  const actions = document.createElement('div');
+  actions.className = 'user-actions';
+  if (user.status === 'pending' || user.status === 'denied') {
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.textContent = 'Разрешить VPN';
+    approve.addEventListener('click', () => changeAccess(user, 'approve'));
+    actions.append(approve);
+  }
+  if (user.status === 'approved' || user.status === 'pending') {
+    const deny = document.createElement('button');
+    deny.type = 'button';
+    deny.textContent = user.status === 'approved' ? 'Отозвать' : 'Отклонить';
+    deny.addEventListener('click', () => changeAccess(user, 'deny'));
+    actions.append(deny);
+  }
+  if (canManageOperators && !user.owner) {
+    const operator = document.createElement('button');
+    operator.type = 'button';
+    operator.textContent = user.operator ? 'Убрать администратора' : 'Назначить администратором';
+    operator.addEventListener('click', () => changeOperator(user, !user.operator));
+    actions.append(operator);
+  }
+  row.append(identity, status, actions);
+  return row;
+}
+async function loadUsers() {
+  usersButton.disabled = true;
+  try {
+    const data = await readJson('/admin/api/users');
+    usersList.replaceChildren(...data.users.map(user => userRow(user, data.can_manage_operators)));
+    usersMessage.textContent = data.users.length === 0
+      ? 'Зарегистрированных пользователей пока нет.'
+      : `${data.users.length} пользователей`;
+  } catch (_) {
+    usersMessage.textContent = 'Не удалось загрузить пользователей. Повторите попытку.';
+  } finally {
+    usersButton.disabled = false;
+  }
+}
+async function changeOperator(user, enabled) {
+  if (!confirm(`${enabled ? 'Дать' : 'Убрать'} доступ к панели для ${user.username}?`)) return;
+  usersMessage.textContent = 'Обновляем права…';
+  try {
+    const response = await fetch(`/admin/api/users/${encodeURIComponent(user.id)}/operator`, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled})
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    await loadUsers();
+  } catch (_) {
+    usersMessage.textContent = 'Не удалось изменить права администратора.';
+  }
+}
+async function changeAccess(user, decision) {
+  if (decision === 'deny' && user.status === 'approved' &&
+      !confirm(`Отозвать VPN-доступ у ${user.username}? Сервер удалит данные доступа для его устройств.`)) return;
+  usersMessage.textContent = 'Сохраняем решение…';
+  try {
+    const response = await fetch(`/admin/api/users/${encodeURIComponent(user.id)}/access`, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision})
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    await loadUsers();
+  } catch (_) {
+    usersMessage.textContent = 'Не удалось сохранить решение. Повторите попытку.';
+  }
+}
+usersButton.addEventListener('click', loadUsers);
+loadUsers();

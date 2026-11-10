@@ -4,3 +4,43 @@ services:
     environment:
       NONA_OIDC_ISSUER: https://nona.server.basketref.ru/auth/realms/nona
       NONA_OIDC_JWKS_URL: http://nona-keycloak:8080/auth/realms/nona/protocol/openid-connect/certs
+      NONA_PROVISIONING_ENABLED: "1"
+
+  admin-api:
+    image: nona-control-api:local
+    restart: unless-stopped
+    entrypoint: ["/admin", "serve"]
+    user: "${NONA_ADMIN_UID:-1000}:${NONA_ADMIN_GID:-1000}"
+    environment:
+      NONA_DATABASE_URL: postgres://nona@db:5432/nona?sslmode=disable
+      NONA_DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      NONA_OIDC_ISSUER: https://nona.server.basketref.ru/auth/realms/nona
+      NONA_OIDC_JWKS_URL: http://nona-keycloak:8080/auth/realms/nona/protocol/openid-connect/certs
+      NONA_NODE_SETTINGS_FILE: /run/nona/vdsina_node_settings.json
+      NONA_3XUI_TOKEN_FILE: /run/nona/vdsina_3xui_token
+      NONA_3XUI_CA_FILE: /run/nona/ca-certificates.crt
+      NONA_CONFIG_SIGNING_KEY_FILE: /run/nona/config_signing_ed25519.pem
+      NONA_CONFIG_KEY_ID: nona-config-2026-11
+      NONA_KC_ADMIN_CLIENT_SECRET_FILE: /run/nona/keycloak_role_manager_secret
+      NONA_OWNER_SUB: ${NONA_OWNER_SUB:?set the original roman Keycloak subject in .env}
+    secrets:
+      - db_password
+    volumes:
+      - ./secrets/vdsina_node_settings.json:/run/nona/vdsina_node_settings.json:ro
+      - ./secrets/vdsina_3xui_token:/run/nona/vdsina_3xui_token:ro
+      - ./secrets/config_signing_ed25519.pem:/run/nona/config_signing_ed25519.pem:ro
+      - ./secrets/keycloak_role_manager_secret:/run/nona/keycloak_role_manager_secret:ro
+      - /etc/ssl/certs/ca-certificates.crt:/run/nona/ca-certificates.crt:ro
+    networks:
+      - proxy
+      - private
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

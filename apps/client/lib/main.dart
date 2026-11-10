@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -65,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _measuringLatency = false;
   String? _latencyMessage;
   int _latencyRequestId = 0;
+  Timer? _updateTimer;
 
   @override
   void initState() {
@@ -123,11 +125,17 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     _restore();
+    _updateTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      if (mounted && !_busy && _auth?.signedIn == true && _deviceId != null) {
+        _checkUpdates();
+      }
+    });
     if (defaultTargetPlatform == TargetPlatform.android) _refreshVpnState();
   }
 
   @override
   void dispose() {
+    _updateTimer?.cancel();
     _oidc?.dispose();
     _http?.close();
     super.dispose();
@@ -176,6 +184,27 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     try {
+      await auth.refreshAccountStatus();
+    } catch (_) {
+      // Keep the last known status while the account server is unavailable.
+    }
+    final access = auth.vpnAccessStatus;
+    if (access != null && access != 'approved') {
+      await vault.clear();
+      if (_vpnState != 'idle' &&
+          defaultTargetPlatform == TargetPlatform.android) {
+        await _androidVpn.stop();
+        _vpnState = 'idle';
+        _vpnTransport = null;
+      }
+      _configurationMessage = switch (access) {
+        'pending' => 'Аккаунт создан. Ожидаем решения администратора',
+        'revoking' => 'Доступ к VPN отзывается',
+        _ => 'Доступ к VPN не выдан',
+      };
+      return;
+    }
+    try {
       final bundle = await ConfigurationSync(
         auth,
         vault,
@@ -206,8 +235,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final auth = _auth;
     if (auth == null || _deviceId == null) return;
     setState(() => _busy = true);
-    await _syncConfiguration(auth);
-    if (mounted) setState(() => _busy = false);
+    try {
+      await _syncConfiguration(auth);
+    } catch (_) {
+      _configurationMessage = 'Не удалось обновить состояние доступа';
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _refreshVpnState() async {
@@ -240,6 +274,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     List<int>? seed;
     try {
+      try {
+        await auth.refreshAccountStatus();
+      } catch (_) {}
+      if (auth.vpnAccessStatus != null && auth.vpnAccessStatus != 'approved') {
+        throw const AuthException('VPN access has not been approved');
+      }
       final bundle = await vault.load(
         accountId: accountId,
         deviceId: deviceId,
@@ -460,6 +500,15 @@ class _HomeScreenState extends State<HomeScreen> {
               const Text('HTTPS-адрес сервера аккаунтов ещё не настроен.')
             else if (auth.signedIn) ...[
               Text('Выполнен вход: ${auth.username ?? 'пользователь'}'),
+              if (auth.vpnAccessStatus != null) ...[
+                const SizedBox(height: 8),
+                Text(switch (auth.vpnAccessStatus) {
+                  'approved' => 'Доступ к VPN разрешён',
+                  'pending' => 'Заявка на VPN ожидает решения администратора',
+                  'revoking' => 'Доступ к VPN отзывается',
+                  _ => 'Доступ к VPN не выдан',
+                }),
+              ],
               const SizedBox(height: 8),
               Text(
                 _deviceId == null
@@ -560,13 +609,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           _deviceId != null &&
                           _vault != null) ...[
                         FilledButton(
-                          onPressed: _busy
+                          onPressed:
+                              _busy ||
+                                  (_vpnState == 'idle' &&
+                                      _auth?.vpnAccessStatus != null &&
+                                      _auth?.vpnAccessStatus != 'approved')
                               ? null
                               : (_vpnState != 'idle'
                                     ? _disconnectVpn
                                     : _connectVpn),
                           child: Text(
-                            _vpnState != 'idle' ? 'Отключить' : 'Подключить',
+                            _vpnState != 'idle'
+                                ? 'Отключить'
+                                : (_auth?.vpnAccessStatus != null &&
+                                          _auth?.vpnAccessStatus != 'approved'
+                                      ? 'Ожидаем доступ'
+                                      : 'Подключить'),
                           ),
                         ),
                         if (_vpnState == 'connected') ...[

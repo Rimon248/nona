@@ -41,7 +41,23 @@ h2{font-size:16px;margin:0 0 14px;font-weight:600}
 .state.wait{color:var(--warning)}
 .state.error{color:var(--negative)}
 .next-section{margin-top:36px;padding:22px;background:var(--raised);border-radius:8px}
+.users-section{margin-top:36px;max-width:1000px}
+.section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}
+.section-heading p{margin:0;color:var(--muted);font-size:13px}
+.users-message{color:var(--muted);font-size:13px;margin:18px 0 10px}
+.users-list{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.user-row{display:grid;grid-template-columns:minmax(180px,1fr) 150px minmax(180px,auto);align-items:center;gap:20px;padding:15px 18px;border-bottom:1px solid var(--border)}
+.user-row:last-child{border-bottom:0}
+.user-identity strong,.user-identity small{display:block}
+.user-identity strong{font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.user-identity small{font-size:12px;color:var(--muted);margin-top:4px}
+.access-status{font-size:12px;color:var(--muted)}
+.access-status.pending,.access-status.revoking{color:var(--warning)}
+.access-status.approved{color:var(--positive)}
+.user-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.user-actions button{font-size:12px;padding:7px 10px}
 .next-section p{font-size:14px;line-height:1.55;margin:0 0 12px;max-width:62ch}
 .next-section a{font-size:14px;color:var(--accent);text-decoration:none;font-weight:600}
 .next-section a:hover{text-decoration:underline}
 @media(max-width:680px){.frame{display:block}.sidebar{padding:12px 18px;display:block}.brand{padding:0}.sidebar nav,.side-note{display:none}.work{display:block}.topbar{height:44px;padding:0 18px}.sheet{margin:0;min-height:calc(100vh - 100px);border:0;border-radius:0;padding:24px 18px}.title-row{display:block}.title-row button{margin-top:20px;width:100%;min-height:44px}.checked{margin-top:25px}.status-row{padding:16px 14px}.next-section{margin-top:24px}}
+@media(max-width:680px){.section-heading{display:block}.section-heading button{margin-top:14px;width:100%}.user-row{grid-template-columns:1fr auto;gap:12px}.user-identity{grid-column:1 / -1}.user-actions{grid-column:2}.user-actions button{min-height:42px}.access-status{grid-column:1}.users-section{margin-top:28px}}

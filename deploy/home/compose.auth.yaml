@@ -25,12 +25,13 @@ services:
       - --cookie-secure=true
       - --cookie-samesite=lax
       - --cookie-expire=8h
-      - --cookie-refresh=15m
+      - --cookie-refresh=1m
       - --upstream=file:///srv/panel/#/admin/
+      - --upstream=http://admin-api:8081/admin/api/
+      - --pass-access-token=true
       - --skip-provider-button=true
       - --reverse-proxy=true
       - --trusted-proxy-ip=172.21.0.5/32
-      - --pass-access-token=false
       - --pass-authorization-header=false
       - --pass-basic-auth=false
       - --pass-user-headers=false

@@ -19,7 +19,7 @@ import (
 )
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: admin create-user USERNAME | install-configuration ACCOUNT_ID DEVICE_ID ENVELOPE_FILE | provision-device ACCOUNT_ID DEVICE_ID | retire-device ACCOUNT_ID DEVICE_ID")
+	fmt.Fprintln(os.Stderr, "usage: admin serve | create-user USERNAME | install-configuration ACCOUNT_ID DEVICE_ID ENVELOPE_FILE | provision-device ACCOUNT_ID DEVICE_ID | retire-device ACCOUNT_ID DEVICE_ID")
 	os.Exit(2)
 }
 
@@ -115,6 +115,11 @@ func main() {
 		usage()
 	}
 	switch os.Args[1] {
+	case "serve":
+		if len(os.Args) != 2 {
+			usage()
+		}
+		serveAdmin()
 	case "create-user":
 		if len(os.Args) != 3 {
 			usage()

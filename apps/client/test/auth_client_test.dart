@@ -70,7 +70,7 @@ void main() {
           expect(request.headers['authorization'], 'Bearer keycloak-access');
           if (request.url.path == '/v1/account') {
             return http.Response(
-              '{"account_id":"account-k","username":"roman","provider":"keycloak"}',
+              '{"account_id":"account-k","username":"roman","provider":"keycloak","vpn_access":"pending"}',
               200,
             );
           }
@@ -91,6 +91,7 @@ void main() {
       await auth.loginWithKeycloak();
       expect(auth.accountId, 'account-k');
       expect(auth.username, 'roman');
+      expect(auth.vpnAccessStatus, 'pending');
       expect(await auth.ensureDeviceRegistered('Android'), 'device-k');
       expect(store.values.containsKey('nona.device_seed.v1.account-k'), isTrue);
       expect(paths, isNot(contains('/v1/sessions')));

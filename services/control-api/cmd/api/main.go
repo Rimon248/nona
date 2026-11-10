@@ -122,7 +122,7 @@ func handlerWithOIDC(service *auth.Service, verifier *oidc.Verifier) http.Handle
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"service":              "nona-control-api",
 			"api_version":          1,
-			"provisioning_enabled": false,
+			"provisioning_enabled": os.Getenv("NONA_PROVISIONING_ENABLED") == "1",
 			"accounts_enabled":     service != nil,
 			"authentication":       provider,
 		})
@@ -202,7 +202,7 @@ func handlerWithOIDC(service *auth.Service, verifier *oidc.Verifier) http.Handle
 				var identity oidc.Identity
 				identity, err = verifier.Verify(r.Context(), bearerToken(r), time.Now().UTC())
 				if err == nil {
-					session, err = service.AuthenticateOIDC(r.Context(), identity.Subject)
+					session, err = service.AuthenticateOIDC(r.Context(), identity.Subject, identity.Username)
 				}
 				if errors.Is(err, oidc.ErrInvalidToken) {
 					err = auth.ErrInvalidCredentials
@@ -232,9 +232,14 @@ func handlerWithOIDC(service *auth.Service, verifier *oidc.Verifier) http.Handle
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
+				status, err := service.AccessStatus(r.Context(), accountID)
+				if err != nil {
+					http.Error(w, "server error", http.StatusInternalServerError)
+					return
+				}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"account_id": accountID, "username": identity.Username, "provider": "keycloak",
+					"account_id": accountID, "username": identity.Username, "provider": "keycloak", "vpn_access": status,
 				})
 			})
 		}

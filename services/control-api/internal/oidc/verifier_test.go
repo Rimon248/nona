@@ -56,6 +56,14 @@ func TestVerifierRequiresSignatureIssuerAudienceAndClient(t *testing.T) {
 	if err != nil || identity.Subject != "account-subject" || identity.Username != "roman" {
 		t.Fatalf("valid Keycloak token rejected: %v %+v", err, identity)
 	}
+	verifier.RequiredRole = "nona-operator"
+	if _, err := verifier.Verify(context.Background(), sign(base), now); err != ErrInvalidToken {
+		t.Fatalf("token without operator role accepted: %v", err)
+	}
+	base["realm_access"] = map[string]any{"roles": []string{"nona-operator"}}
+	if _, err := verifier.Verify(context.Background(), sign(base), now); err != nil {
+		t.Fatalf("operator token rejected: %v", err)
+	}
 	for name, change := range map[string]func(map[string]any){
 		"issuer":   func(c map[string]any) { c["iss"] = "https://other.example" },
 		"audience": func(c map[string]any) { c["aud"] = "other-api" },
@@ -73,13 +81,14 @@ func TestVerifierRequiresSignatureIssuerAudienceAndClient(t *testing.T) {
 			}
 		})
 	}
-	tampered := sign(base)
-	if tampered[len(tampered)-1] == 'A' {
-		tampered = tampered[:len(tampered)-1] + "B"
+	tampered := []byte(sign(base))
+	position := len(tampered) - 16
+	if tampered[position] == 'A' {
+		tampered[position] = 'B'
 	} else {
-		tampered = tampered[:len(tampered)-1] + "A"
+		tampered[position] = 'A'
 	}
-	if _, err := verifier.Verify(context.Background(), tampered, now); err != ErrInvalidToken {
+	if _, err := verifier.Verify(context.Background(), string(tampered), now); err != ErrInvalidToken {
 		t.Fatalf("tampered signature accepted: %v", err)
 	}
 }

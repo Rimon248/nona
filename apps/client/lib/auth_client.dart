@@ -118,12 +118,14 @@ class AuthClient {
   String? _oidcAccountId;
   bool _oidcInitialized = false;
   String? _username;
+  String? _vpnAccessStatus;
 
   bool get signedIn =>
       _oidc == null ? _tokens != null : _oidcAccountId != null && _oidc.hasUser;
   String? get accountId =>
       _oidc == null ? _tokens?.accountId : (signedIn ? _oidcAccountId : null);
   String? get username => _username;
+  String? get vpnAccessStatus => _vpnAccessStatus;
 
   String get _deviceSeedKey {
     final identity = _oidc == null
@@ -174,14 +176,25 @@ class AuthClient {
       if (account is! Map<String, dynamic> ||
           account['account_id'] is! String ||
           (account['account_id'] as String).isEmpty ||
-          account['username'] is! String) {
+          account['username'] is! String ||
+          !const [
+            'pending',
+            'approved',
+            'revoking',
+            'denied',
+          ].contains(account['vpn_access'])) {
         throw const AuthException('Invalid Keycloak account');
       }
       _oidcAccountId = account['account_id'] as String;
       _username = account['username'] as String;
+      _vpnAccessStatus = account['vpn_access'] as String;
     } on FormatException {
       throw const AuthException('Invalid Keycloak account');
     }
+  }
+
+  Future<void> refreshAccountStatus() async {
+    if (_oidc != null && signedIn) await _loadOidcAccount();
   }
 
   Future<void> loginWithKeycloak() async {
@@ -459,6 +472,7 @@ class AuthClient {
       await _oidc.forgetUser();
       _oidcAccountId = null;
       _username = null;
+      _vpnAccessStatus = null;
       return;
     }
     var tokens = _tokens;

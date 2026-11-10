@@ -14,9 +14,10 @@
       <div class="brand"><span class="brand-mark" aria-hidden="true">Н</span><span>Нона<small>Панель оператора</small></span></div>
       <nav>
         <a class="active" href="/admin/" aria-current="page">Обзор</a>
+        <a href="#users-title">Пользователи</a>
         <a href="/auth/realms/nona/account/">Мой аккаунт</a>
       </nav>
-      <p class="side-note">Управление VPN-узлами и пользователями появится после подключения выдачи конфигураций.</p>
+      <p class="side-note">Новые аккаунты ждут вашего решения. Выдача конфигураций начинается после одобрения.</p>
     </aside>
     <div class="work">
       <header class="topbar"><span>Домашний сервер</span><a href="/oauth2/sign_out?rd=/admin/">Выйти</a></header>
@@ -34,9 +35,14 @@
             <div class="status-row"><div><strong>Выдача VPN-доступа</strong><small>Создание и отзыв данных на VDSina</small></div><span id="provisioning" class="state">Проверка</span></div>
           </div>
         </section>
+        <section class="users-section" aria-labelledby="users-title">
+          <div class="section-heading"><div><h2 id="users-title">Пользователи</h2><p>Одобрение включает выдачу VPN-доступа на зарегистрированные устройства. Роль администратора открывает эту панель.</p></div><button id="refresh-users" type="button">Обновить список</button></div>
+          <p id="users-message" class="users-message" aria-live="polite">Загрузка пользователей…</p>
+          <div id="users-list" class="users-list"></div>
+        </section>
         <section class="next-section" aria-labelledby="next-title">
-          <h2 id="next-title">Следующий этап</h2>
-          <p>Подключить автоматическую выдачу индивидуальных конфигураций и управление узлами. Пока пользователям не выдаётся рабочий VPN-доступ по аккаунту.</p>
+          <h2 id="next-title">Выдача доступа</h2>
+          <p>После одобрения Нона создаёт отдельную конфигурацию для каждого зарегистрированного устройства. При отзыве доступа удаляет данные подключения на VDSina. Обновление может занять несколько минут.</p>
           <a href="/v1/info" target="_blank" rel="noopener noreferrer">Открыть состояние API</a>
         </section>
       </main>

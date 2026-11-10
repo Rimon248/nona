@@ -2,7 +2,7 @@
   "realm": "nona",
   "displayName": "Виртуальный Помощник Нона",
   "enabled": true,
-  "registrationAllowed": false,
+  "registrationAllowed": true,
   "verifyEmail": false,
   "resetPasswordAllowed": false,
   "rememberMe": false,
@@ -14,6 +14,16 @@
     ]
   },
   "clients": [
+    {
+      "clientId": "nona-role-manager",
+      "name": "Служба назначения администраторов Ноны",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
+    },
     {
       "clientId": "nona-panel",
       "name": "Панель Ноны",

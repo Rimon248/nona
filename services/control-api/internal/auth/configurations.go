@@ -34,9 +34,11 @@ func (s *Service) InstallConfiguration(ctx context.Context, accountID, deviceID 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var owner string
+	var owner, accessStatus string
+	var oidcSubject *string
 	var revokedAt *time.Time
-	if err := tx.QueryRow(ctx, `SELECT account_id, revoked_at FROM devices WHERE id=$1 FOR UPDATE`, deviceID).Scan(&owner, &revokedAt); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT d.account_id, d.revoked_at, a.vpn_access_status, a.oidc_subject FROM devices d
+		JOIN accounts a ON a.id=d.account_id WHERE d.id=$1 FOR UPDATE OF d`, deviceID).Scan(&owner, &revokedAt, &accessStatus, &oidcSubject); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrDeviceNotFound
 		}
@@ -44,6 +46,9 @@ func (s *Service) InstallConfiguration(ctx context.Context, accountID, deviceID 
 	}
 	if owner != accountID || revokedAt != nil {
 		return ErrDeviceNotFound
+	}
+	if oidcSubject != nil && accessStatus != "approved" {
+		return ErrInvalidCredentials
 	}
 	var storedVersion int64
 	var storedEnvelope string
@@ -74,8 +79,9 @@ func (s *Service) InstallConfiguration(ctx context.Context, accountID, deviceID 
 func (s *Service) DeviceConfiguration(ctx context.Context, accountID, deviceID string, now time.Time) (string, error) {
 	var envelope string
 	err := s.pool.QueryRow(ctx, `SELECT c.envelope FROM device_configurations c
-		JOIN devices d ON d.id=c.device_id
-		WHERE d.id=$1 AND d.account_id=$2 AND d.revoked_at IS NULL AND c.expires_at>$3`,
+		JOIN devices d ON d.id=c.device_id JOIN accounts a ON a.id=d.account_id
+		WHERE d.id=$1 AND d.account_id=$2 AND d.revoked_at IS NULL AND c.expires_at>$3
+		AND (a.oidc_subject IS NULL OR a.vpn_access_status='approved')`,
 		deviceID, accountID, now).Scan(&envelope)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrConfigurationNotFound
