@@ -354,11 +354,11 @@ class _AppListPage extends StatefulWidget {
 class _AppListPageState extends State<_AppListPage> {
   late InternetPolicy _policy = widget.policy;
   String _search = '';
-  bool _selectingAll = false;
+  bool _updatingAll = false;
 
   Future<void> _selectAll() async {
-    if (_selectingAll) return;
-    setState(() => _selectingAll = true);
+    if (_updatingAll) return;
+    setState(() => _updatingAll = true);
     final ids = widget.data.apps.map((app) => app.packageName).toSet();
     final next = InternetPolicy(
       sitesMode: _policy.sitesMode,
@@ -379,7 +379,35 @@ class _AppListPageState extends State<_AppListPage> {
         );
       }
     } finally {
-      if (mounted) setState(() => _selectingAll = false);
+      if (mounted) setState(() => _updatingAll = false);
+    }
+  }
+
+  Future<void> _clearAll() async {
+    if (_updatingAll) return;
+    setState(() => _updatingAll = true);
+    final next = InternetPolicy(
+      sitesMode: _policy.sitesMode,
+      appsMode: _policy.appsMode,
+      siteOverrides: _policy.siteOverrides,
+      appOverrides: const <String, bool>{},
+      customSites: _policy.customSites,
+    );
+    try {
+      if (await widget.save(next) && mounted) {
+        setState(() => _policy = next);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _policy.appsMode == DirectMode.off
+                  ? 'Дополнительный выбор приложений снят. Переподключите VPN, чтобы применить.'
+                  : 'Дополнительный выбор снят; российский режим приложений сохранён. Переподключите VPN, чтобы применить.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _updatingAll = false);
     }
   }
 
@@ -437,9 +465,21 @@ class _AppListPageState extends State<_AppListPage> {
               child: SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _selectingAll ? null : _selectAll,
+                  onPressed: _updatingAll ? null : _selectAll,
                   icon: const Icon(Icons.select_all),
                   label: const Text('Выбрать все'),
+                ),
+              ),
+            ),
+          if (!widget.russianOnly)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _updatingAll ? null : _clearAll,
+                  icon: const Icon(Icons.deselect),
+                  label: const Text('Снять выбор со всех'),
                 ),
               ),
             ),
