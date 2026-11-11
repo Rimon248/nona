@@ -20,6 +20,7 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 target_link_libraries(${BINARY_NAME} PRIVATE shell32)
+target_link_options(${BINARY_NAME} PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
 
 set(NONA_WINDOWS_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/engine")
 foreach(NONA_WINDOWS_ENGINE_FILE IN ITEMS
