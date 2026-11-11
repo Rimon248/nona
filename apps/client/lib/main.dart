@@ -73,11 +73,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
   String _vpnState = 'idle';
   String? _vpnTransport;
+  String? _vpnNodeName;
+  String? _activeNodeId;
   int? _latencyMs;
   bool _measuringLatency = false;
   String? _latencyMessage;
   int _latencyRequestId = 0;
   Timer? _updateTimer;
+  Timer? _vpnHealthTimer;
+  int _vpnHealthFailures = 0;
 
   static const MethodChannel _trayChannel = MethodChannel('nona.tray');
 
@@ -156,11 +160,15 @@ class _HomeScreenState extends State<HomeScreen> {
         _checkUpdates();
       }
     });
+    _vpnHealthTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _checkActiveVpn();
+    });
   }
 
   @override
   void dispose() {
     _updateTimer?.cancel();
+    _vpnHealthTimer?.cancel();
     if (defaultTargetPlatform == TargetPlatform.windows) {
       _trayChannel.setMethodCallHandler(null);
     }
@@ -247,6 +255,8 @@ class _HomeScreenState extends State<HomeScreen> {
         await _stopVpn();
         _vpnState = 'idle';
         _vpnTransport = null;
+        _vpnNodeName = null;
+        _activeNodeId = null;
       }
       _configurationMessage = switch (access) {
         'pending' => 'Аккаунт создан. Ожидаем решения администратора',
@@ -326,7 +336,16 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refreshVpnState() async {
     try {
       final state = await _vpnStatus();
-      if (mounted) setState(() => _vpnState = state);
+      if (mounted) {
+        setState(() {
+          _vpnState = state;
+          if (state == 'idle') {
+            _vpnTransport = null;
+            _vpnNodeName = null;
+            _activeNodeId = null;
+          }
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _vpnState = 'error');
     }
@@ -350,6 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _latencyMessage = null;
       _measuringLatency = false;
       _latencyRequestId++;
+      _vpnHealthFailures = 0;
     });
     List<int>? seed;
     try {
@@ -371,7 +391,9 @@ class _HomeScreenState extends State<HomeScreen> {
       var declined = false;
       nodeLoop:
       for (final rawNode in nodes) {
-        final nodeId = (rawNode as Map<String, dynamic>)['id'] as String;
+        final node = rawNode as Map<String, dynamic>;
+        final nodeId = node['id'] as String;
+        final provider = node['provider'] as String;
         final access = await vault.openNodeAccess(
           accountId: accountId,
           deviceId: deviceId,
@@ -393,6 +415,9 @@ class _HomeScreenState extends State<HomeScreen> {
           }
           if (result) {
             _vpnTransport = candidate.name;
+            _vpnNodeName = provider;
+            _activeNodeId = nodeId;
+            _vpnHealthFailures = 0;
             connected = true;
             break nodeLoop;
           }
@@ -468,6 +493,27 @@ class _HomeScreenState extends State<HomeScreen> {
     _ => Future<String>.value('idle'),
   };
 
+  /// Check a second independent HTTPS destination before accepting a tunnel.
+  /// A running interface and a fast response from one probe host do not prove
+  /// that ordinary browser traffic can reach websites.
+  Future<void> _probeWebTraffic() async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final request = await client
+          .getUrl(Uri.https('example.com', '/'))
+          .timeout(const Duration(seconds: 7));
+      final response = await request.close().timeout(
+        const Duration(seconds: 7),
+      );
+      await response.drain<void>();
+      if (response.statusCode < 200 || response.statusCode >= 400) {
+        throw const HttpException('VPN website probe failed');
+      }
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<void> _stopVpn() => switch (defaultTargetPlatform) {
     TargetPlatform.android => _androidVpn.stop(),
     TargetPlatform.windows => _windowsVpn.stop(),
@@ -491,7 +537,16 @@ class _HomeScreenState extends State<HomeScreen> {
       for (var attempt = 0; attempt < 30; attempt++) {
         await Future<void>.delayed(const Duration(milliseconds: 500));
         _vpnState = await _vpnStatus();
-        if (_vpnState == 'connected') return true;
+        if (_vpnState == 'connected') {
+          try {
+            if (defaultTargetPlatform != TargetPlatform.macOS) {
+              await _probeWebTraffic();
+            }
+            return true;
+          } catch (_) {
+            break;
+          }
+        }
         if (_vpnState == 'error') break;
       }
     } on PlatformException catch (error) {
@@ -518,6 +573,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _latencyMessage = null;
       _measuringLatency = false;
       _latencyRequestId++;
+      _vpnHealthFailures = 0;
     });
     try {
       await _stopVpn();
@@ -529,7 +585,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _message = _vpnState == 'idle'
           ? null
           : 'Система ещё завершает VPN. Повторите отключение.';
-      if (_vpnState == 'idle') _vpnTransport = null;
+      if (_vpnState == 'idle') {
+        _vpnTransport = null;
+        _vpnNodeName = null;
+        _activeNodeId = null;
+      }
     } catch (_) {
       _message = 'Не удалось остановить VPN';
     } finally {
@@ -557,6 +617,17 @@ class _HomeScreenState extends State<HomeScreen> {
           _latencyMessage = 'VPN отключился во время проверки';
         }
       });
+      if (state == 'connected') {
+        try {
+          await _probeWebTraffic();
+        } catch (_) {
+          if (mounted && requestId == _latencyRequestId) {
+            setState(
+              () => _latencyMessage = 'Проверка задержки прошла, но обычный сайт через VPN не открылся',
+            );
+          }
+        }
+      }
     } catch (_) {
       if (mounted && requestId == _latencyRequestId) {
         setState(
@@ -568,6 +639,123 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted && requestId == _latencyRequestId) {
         setState(() => _measuringLatency = false);
       }
+    }
+  }
+
+  Future<void> _checkActiveVpn() async {
+    if (!mounted ||
+        _busy ||
+        _measuringLatency ||
+        _vpnState != 'connected' ||
+        _activeNodeId == null ||
+        !{
+          TargetPlatform.android,
+          TargetPlatform.windows,
+        }.contains(defaultTargetPlatform)) {
+      return;
+    }
+    try {
+      await _measureVpn();
+      await _probeWebTraffic();
+      _vpnHealthFailures = 0;
+    } catch (_) {
+      _vpnHealthFailures++;
+      if (_vpnHealthFailures >= 2) await _switchToFallback();
+    }
+  }
+
+  Future<void> _switchToFallback() async {
+    final auth = _auth;
+    final vault = _vault;
+    final accountId = auth?.accountId;
+    final deviceId = _deviceId;
+    final currentNode = _activeNodeId;
+    if (_busy ||
+        auth == null ||
+        vault == null ||
+        accountId == null ||
+        deviceId == null ||
+        currentNode == null) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = 'Сервер перестал отвечать. Ищу резервный узел…';
+    });
+    List<int>? seed;
+    try {
+      final bundle = await vault.load(
+        accountId: accountId,
+        deviceId: deviceId,
+        now: DateTime.now(),
+      );
+      if (bundle == null) throw const BundleException('No saved configuration');
+      final nodes = bundle.payload['nodes'] as List;
+      final currentIndex = nodes.indexWhere(
+        (raw) => (raw as Map<String, dynamic>)['id'] == currentNode,
+      );
+      if (currentIndex < 0 || nodes.length < 2) {
+        throw StateError('No fallback node is configured');
+      }
+      seed = await auth.readDeviceSeed();
+      await _stopVpn();
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        _vpnState = await _vpnStatus();
+        if (_vpnState == 'idle') break;
+      }
+      if (_vpnState != 'idle') throw StateError('VPN did not stop');
+      for (var offset = 1; offset < nodes.length; offset++) {
+        final index = (currentIndex + offset) % nodes.length;
+        final node = nodes[index] as Map<String, dynamic>;
+        final nodeId = node['id'] as String;
+        final access = await vault.openNodeAccess(
+          accountId: accountId,
+          deviceId: deviceId,
+          nodeId: nodeId,
+          deviceSeed: seed,
+          now: DateTime.now(),
+        );
+        final candidates = <({String name, Future<bool?> Function() start})>[
+          if (access.hysteria2 != null)
+            (name: 'Hysteria2', start: () => _startHysteria(access.hysteria2!)),
+          if (access.vlessReality != null)
+            (name: 'VLESS', start: () => _startVless(access.vlessReality!)),
+        ];
+        for (final candidate in candidates) {
+          final result = await _attemptVpn(candidate.start);
+          if (result == null) throw StateError('VPN permission was declined');
+          if (result) {
+            _vpnState = 'connected';
+            _vpnTransport = candidate.name;
+            _vpnNodeName = node['provider'] as String?;
+            _activeNodeId = nodeId;
+            _vpnHealthFailures = 0;
+            _message = 'Переключено на резервный узел ${_vpnNodeName ?? ''}'
+                .trim();
+            return;
+          }
+        }
+      }
+      _vpnState = await _vpnStatus();
+      if (_vpnState != 'idle') await _stopVpn();
+      _vpnState = 'idle';
+      _vpnTransport = null;
+      _vpnNodeName = null;
+      _activeNodeId = null;
+      _message = 'Основной и резервные серверы сейчас недоступны';
+    } catch (_) {
+      try {
+        await _stopVpn();
+      } catch (_) {}
+      _vpnState = 'idle';
+      _vpnTransport = null;
+      _vpnNodeName = null;
+      _activeNodeId = null;
+      _message = 'Не удалось переключиться на резервный сервер';
+    } finally {
+      seed?.fillRange(0, seed.length, 0);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -629,6 +817,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_vpnControlsAvailable) {
         await _stopVpn();
         _vpnState = 'idle';
+        _vpnTransport = null;
+        _vpnNodeName = null;
+        _activeNodeId = null;
       }
       await auth.logout();
       await _vault?.clear();
@@ -753,10 +944,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(switch (_vpnState) {
-                              'connected' =>
-                                _vpnTransport == null
-                                    ? 'VPN подключён'
-                                    : 'VPN подключён · $_vpnTransport',
+                              'connected' => [
+                                'VPN подключён',
+                                ?_vpnNodeName,
+                                ?_vpnTransport,
+                              ].join(' · '),
                               'connecting' => 'Подключение VPN',
                               'disconnecting' => 'Отключение VPN',
                               'error' => 'Ошибка подключения',

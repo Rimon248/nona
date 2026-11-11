@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"nona.example/control-api/internal/auth"
 	"nona.example/control-api/internal/oidc"
@@ -210,6 +209,10 @@ func adminHandler(service *auth.Service, verifier *oidc.Verifier, keycloak *keyc
 func removeDeviceAccess(pool *pgxpool.Pool, accountID, deviceID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	nodes, err := loadNodes()
+	if err != nil {
+		return err
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -218,18 +221,13 @@ func removeDeviceAccess(pool *pgxpool.Pool, accountID, deviceID string) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, deviceID); err != nil {
 		return err
 	}
-	var clientID string
-	err = tx.QueryRow(ctx, `SELECT r.client_id FROM device_remote_credentials r
-		JOIN devices d ON d.id=r.device_id WHERE r.device_id=$1 AND d.account_id=$2`, deviceID, accountID).Scan(&clientID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	var hasCredentials bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM device_remote_credentials r
+		JOIN devices d ON d.id=r.device_id WHERE r.device_id=$1 AND d.account_id=$2)`, deviceID, accountID).Scan(&hasCredentials); err != nil {
 		return err
 	}
-	if err == nil {
-		_, panel, err := loadPanel()
-		if err != nil {
-			return err
-		}
-		if err := panel.Delete(ctx, clientID); err != nil {
+	if hasCredentials {
+		if err := deleteRemoteClients(ctx, pool, accountID, deviceID, nodes); err != nil {
 			return err
 		}
 	}
@@ -350,14 +348,20 @@ func reconcileAccess(pool *pgxpool.Pool, service *auth.Service, keycloak *keyclo
 			}
 		}
 	}
+	nodeIDs, err := configuredNodeIDs()
+	if err != nil {
+		return err
+	}
 	rows, err = pool.Query(ctx, `SELECT d.account_id, d.id FROM devices d
 		JOIN accounts a ON a.id=d.account_id
 		LEFT JOIN device_configurations c ON c.device_id=d.id
 		LEFT JOIN device_provisioning_attempts p ON p.device_id=d.id
 		WHERE a.vpn_access_status='approved' AND a.oidc_subject IS NOT NULL
-		AND d.revoked_at IS NULL AND (c.device_id IS NULL OR c.expires_at<now()+interval '7 days')
+		AND d.revoked_at IS NULL AND (c.device_id IS NULL OR c.expires_at<now()+interval '7 days' OR p.device_id IS NOT NULL
+			OR (SELECT count(DISTINCT r.node_id) FROM device_remote_credentials r
+				WHERE r.device_id=d.id AND r.node_id=ANY($1::text[]))<cardinality($1::text[]))
 		AND (p.device_id IS NULL OR p.next_attempt_at<=now())
-		ORDER BY d.created_at LIMIT 10`)
+		ORDER BY d.created_at LIMIT 10`, nodeIDs)
 	if err != nil {
 		return err
 	}

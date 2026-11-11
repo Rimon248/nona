@@ -1,0 +1,16 @@
+[
+  {
+    "id": "vdsina-1",
+    "provider": "VDSina",
+    "settings_file": "/run/nona/vdsina_node_settings.json",
+    "token_file": "/run/nona/vdsina_3xui_token",
+    "ca_file": "/run/nona/ca-certificates.crt"
+  },
+  {
+    "id": "aeza-1",
+    "provider": "Aeza",
+    "settings_file": "/run/nona/aeza_node_settings.json",
+    "token_file": "/run/nona/aeza_3xui_token",
+    "ca_file": "/run/nona/ca-certificates.crt"
+  }
+]

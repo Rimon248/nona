@@ -45,8 +45,32 @@ type provisionSettings struct {
 	} `json:"hysteria2"`
 }
 
+// The manifest contains paths, never panel tokens or VPN credentials. Its
+// order is the connection priority used by every client.
+type nodeSpec struct {
+	ID           string `json:"id"`
+	Provider     string `json:"provider"`
+	SettingsFile string `json:"settings_file"`
+	TokenFile    string `json:"token_file"`
+	CAFile       string `json:"ca_file"`
+}
+
+type provisionNode struct {
+	nodeSpec
+	Settings provisionSettings
+	Panel    *node3xui.Client
+}
+
 func managedClientID(accountID, deviceID string) string {
 	sum := sha256.Sum256([]byte(accountID + "\x00" + deviceID))
+	return "nona_" + hex.EncodeToString(sum[:16])
+}
+
+func managedClientIDForNode(accountID, deviceID, nodeID string) string {
+	if nodeID == "vdsina-1" {
+		return managedClientID(accountID, deviceID) // Preserve existing clients.
+	}
+	sum := sha256.Sum256([]byte(accountID + "\x00" + deviceID + "\x00" + nodeID))
 	return "nona_" + hex.EncodeToString(sum[:16])
 }
 
@@ -73,6 +97,18 @@ func validHost(value string) bool {
 			if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '-') {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+func validNodeID(value string) bool {
+	if len(value) < 2 || len(value) > 64 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+			return false
 		}
 	}
 	return true
@@ -120,40 +156,177 @@ func loadSigner() (ed25519.PrivateKey, string, error) {
 	return signer, keyID, nil
 }
 
-func loadPanel() (provisionSettings, *node3xui.Client, error) {
+func loadNode(spec nodeSpec) (provisionNode, error) {
+	var node provisionNode
 	var settings provisionSettings
-	settingsRaw, err := readPrivateFile(os.Getenv("NONA_NODE_SETTINGS_FILE"), 8192)
+	settingsRaw, err := readPrivateFile(spec.SettingsFile, 8192)
 	if err != nil {
-		return settings, nil, errors.New("could not read private node settings")
+		return node, errors.New("could not read private node settings")
 	}
 	if err := json.Unmarshal(settingsRaw, &settings); err != nil || !validSettings(settings) {
-		return settings, nil, errors.New("invalid private node settings")
+		return node, errors.New("invalid private node settings")
 	}
-	tokenRaw, err := readPrivateFile(os.Getenv("NONA_3XUI_TOKEN_FILE"), 512)
+	tokenRaw, err := readPrivateFile(spec.TokenFile, 512)
 	if err != nil {
-		return settings, nil, errors.New("could not read panel token")
+		return node, errors.New("could not read panel token")
 	}
 	token := strings.TrimSpace(string(tokenRaw))
-	caRaw, err := os.ReadFile(os.Getenv("NONA_3XUI_CA_FILE"))
+	caRaw, err := os.ReadFile(spec.CAFile)
 	if err != nil {
-		return settings, nil, errors.New("could not read panel certificate")
+		return node, errors.New("could not read panel certificate")
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(caRaw) {
-		return settings, nil, errors.New("invalid panel certificate")
+		return node, errors.New("invalid panel certificate")
 	}
 	panel, err := node3xui.New(settings.PanelURL, token, &http.Client{
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}},
 	})
 	if err != nil {
-		return settings, nil, errors.New("invalid panel connection")
+		return node, errors.New("invalid panel connection")
 	}
-	return settings, panel, nil
+	return provisionNode{nodeSpec: spec, Settings: settings, Panel: panel}, nil
+}
+
+func loadNodes() ([]provisionNode, error) {
+	specs, err := readNodeSpecs()
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]provisionNode, 0, len(specs))
+	for _, spec := range specs {
+		node, err := loadNode(spec)
+		if err != nil {
+			return nil, fmt.Errorf("node %s: %w", spec.ID, err)
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, nil
+}
+
+func readNodeSpecs() ([]nodeSpec, error) {
+	var specs []nodeSpec
+	if path := os.Getenv("NONA_NODES_FILE"); path != "" {
+		raw, err := readPrivateFile(path, 8192)
+		if err != nil || json.Unmarshal(raw, &specs) != nil {
+			return nil, errors.New("invalid private node manifest")
+		}
+	} else {
+		specs = []nodeSpec{{ID: "vdsina-1", Provider: "VDSina",
+			SettingsFile: os.Getenv("NONA_NODE_SETTINGS_FILE"),
+			TokenFile:    os.Getenv("NONA_3XUI_TOKEN_FILE"), CAFile: os.Getenv("NONA_3XUI_CA_FILE")}}
+	}
+	if len(specs) == 0 || len(specs) > 8 || specs[0].ID != "vdsina-1" ||
+		(len(specs) > 1 && specs[1].ID != "aeza-1") {
+		return nil, errors.New("invalid node priority")
+	}
+	seen := make(map[string]bool, len(specs))
+	for _, spec := range specs {
+		if !validNodeID(spec.ID) || seen[spec.ID] ||
+			spec.Provider == "" || len(spec.Provider) > 64 ||
+			spec.SettingsFile == "" || spec.TokenFile == "" || spec.CAFile == "" {
+			return nil, errors.New("invalid node manifest entry")
+		}
+		seen[spec.ID] = true
+	}
+	return specs, nil
+}
+
+func configuredNodeIDs() ([]string, error) {
+	specs, err := readNodeSpecs()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(specs))
+	for i, spec := range specs {
+		ids[i] = spec.ID
+	}
+	return ids, nil
+}
+
+func provisionOnNode(ctx context.Context, pool *pgxpool.Pool, accountID, deviceID string, node provisionNode) (configbundle.PlainNode, error) {
+	id := managedClientIDForNode(accountID, deviceID, node.ID)
+	// Persist intent before contacting the node. A timeout can occur after the
+	// remote client was created, and retirement must still find that client.
+	if _, err := pool.Exec(ctx, `INSERT INTO device_remote_credentials (device_id, node_id, client_id)
+		VALUES ($1,$2,$3) ON CONFLICT (device_id,node_id) DO NOTHING`, deviceID, node.ID, id); err != nil {
+		return configbundle.PlainNode{}, errors.New("could not record remote credential intent")
+	}
+	var recordedID string
+	if err := pool.QueryRow(ctx, `SELECT client_id FROM device_remote_credentials WHERE device_id=$1 AND node_id=$2`, deviceID, node.ID).Scan(&recordedID); err != nil || recordedID != id {
+		return configbundle.PlainNode{}, errors.New("remote credential record mismatch")
+	}
+	settings := node.Settings
+	inboundIDs := []int{settings.Hysteria.InboundID, settings.VLESS.InboundID}
+	if err := node.Panel.Add(ctx, id, inboundIDs); err != nil {
+		// A retry can encounter the client created by the preceding attempt.
+		// Only a matching, enabled Nona client may be reused.
+		if _, getErr := node.Panel.Get(ctx, id); getErr != nil {
+			return configbundle.PlainNode{}, errors.New("could not create VPN client")
+		}
+	}
+	record, err := node.Panel.Get(ctx, id)
+	if err != nil || !record.Enable || record.UUID == "" || record.Auth == "" ||
+		!slices.Contains(record.InboundIDs, settings.Hysteria.InboundID) || !slices.Contains(record.InboundIDs, settings.VLESS.InboundID) {
+		return configbundle.PlainNode{}, errors.New("VPN client is incomplete")
+	}
+	access, err := json.Marshal(map[string]any{
+		"schema_version": 2,
+		"vless_reality": map[string]any{"host": settings.Host, "port": settings.VLESS.Port,
+			"user_id": record.UUID, "server_name": settings.VLESS.ServerName,
+			"reality_password": settings.VLESS.RealityPublicKey, "encryption": settings.VLESS.ClientEncryption,
+			"short_id": settings.VLESS.ShortID, "flow": record.Flow},
+		"hysteria2": map[string]any{"host": settings.Host, "port": settings.Hysteria.Port,
+			"auth": record.Auth, "server_name": settings.Hysteria.ServerName,
+			"obfs_password": settings.Hysteria.ObfsPassword},
+	})
+	if err != nil {
+		return configbundle.PlainNode{}, errors.New("could not build node access")
+	}
+	return configbundle.PlainNode{ID: node.ID, Provider: node.Provider, Endpoint: settings.Host,
+		Transports: []string{"hysteria2", "vless-reality"}, Access: access}, nil
+}
+
+func deleteRemoteClients(ctx context.Context, pool *pgxpool.Pool, accountID, deviceID string, nodes []provisionNode) error {
+	panels := make(map[string]*node3xui.Client, len(nodes))
+	for _, node := range nodes {
+		panels[node.ID] = node.Panel
+	}
+	rows, err := pool.Query(ctx, `SELECT r.node_id, r.client_id FROM device_remote_credentials r
+		JOIN devices d ON d.id=r.device_id WHERE r.device_id=$1 AND d.account_id=$2`, deviceID, accountID)
+	if err != nil {
+		return errors.New("could not load remote VPN credentials")
+	}
+	type credential struct{ nodeID, clientID string }
+	var credentials []credential
+	for rows.Next() {
+		var item credential
+		if err := rows.Scan(&item.nodeID, &item.clientID); err != nil {
+			rows.Close()
+			return errors.New("could not load remote VPN credentials")
+		}
+		credentials = append(credentials, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return errors.New("could not load remote VPN credentials")
+	}
+	rows.Close()
+	for _, item := range credentials {
+		panel := panels[item.nodeID]
+		if panel == nil {
+			return fmt.Errorf("node %s has remote credentials but is not configured", item.nodeID)
+		}
+		if err := panel.Delete(ctx, item.clientID); err != nil {
+			return fmt.Errorf("could not delete remote VPN client on %s", item.nodeID)
+		}
+	}
+	return nil
 }
 
 func provisionDevice(pool *pgxpool.Pool, service *auth.Service, accountID, deviceID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	guard, err := pool.Begin(ctx)
 	if err != nil {
@@ -177,7 +350,7 @@ func provisionDevice(pool *pgxpool.Pool, service *auth.Service, accountID, devic
 	if err != nil || previousVersion < 0 || previousVersion > 1000000 {
 		return errors.New("could not load device")
 	}
-	settings, panel, err := loadPanel()
+	nodes, err := loadNodes()
 	if err != nil {
 		return err
 	}
@@ -185,48 +358,25 @@ func provisionDevice(pool *pgxpool.Pool, service *auth.Service, accountID, devic
 	if err != nil {
 		return err
 	}
-	id := managedClientID(accountID, deviceID)
-	// Commit the marker before contacting the panel. A failed request may still
-	// have created a client, so a retry or operator retirement must resolve it.
-	if _, err := pool.Exec(ctx, `INSERT INTO device_remote_credentials (device_id, node_id, client_id)
-		VALUES ($1,'vdsina-1',$2) ON CONFLICT (device_id,node_id) DO NOTHING`, deviceID, id); err != nil {
-		return errors.New("could not record remote credential intent")
-	}
-	var recordedID string
-	if err := pool.QueryRow(ctx, `SELECT client_id FROM device_remote_credentials WHERE device_id=$1 AND node_id='vdsina-1'`, deviceID).Scan(&recordedID); err != nil || recordedID != id {
-		return errors.New("remote credential record mismatch")
-	}
-	inboundIDs := []int{settings.Hysteria.InboundID, settings.VLESS.InboundID}
-	if err := panel.Add(ctx, id, inboundIDs); err != nil {
-		// A retry can encounter the client created by the preceding attempt.
-		// Only a matching, enabled Nona client may be reused.
-		if _, getErr := panel.Get(ctx, id); getErr != nil {
-			return errors.New("could not create VPN client")
+	plainNodes := make([]configbundle.PlainNode, 0, len(nodes))
+	var partial bool
+	for _, node := range nodes {
+		plain, err := provisionOnNode(ctx, pool, accountID, deviceID, node)
+		if err != nil {
+			partial = true
+			continue
 		}
+		plainNodes = append(plainNodes, plain)
 	}
-	record, err := panel.Get(ctx, id)
-	if err != nil || !record.Enable || record.UUID == "" || record.Auth == "" ||
-		!slices.Contains(record.InboundIDs, settings.Hysteria.InboundID) || !slices.Contains(record.InboundIDs, settings.VLESS.InboundID) {
-		return errors.New("VPN client is incomplete")
-	}
-	access, err := json.Marshal(map[string]any{
-		"schema_version": 2,
-		"vless_reality": map[string]any{"host": settings.Host, "port": settings.VLESS.Port,
-			"user_id": record.UUID, "server_name": settings.VLESS.ServerName,
-			"reality_password": settings.VLESS.RealityPublicKey, "encryption": settings.VLESS.ClientEncryption,
-			"short_id": settings.VLESS.ShortID, "flow": record.Flow},
-		"hysteria2": map[string]any{"host": settings.Host, "port": settings.Hysteria.Port,
-			"auth": record.Auth, "server_name": settings.Hysteria.ServerName,
-			"obfs_password": settings.Hysteria.ObfsPassword},
-	})
-	if err != nil {
-		return errors.New("could not build node access")
+	if len(plainNodes) == 0 {
+		return errors.New("no VPN node could be provisioned")
 	}
 	now := time.Now().UTC()
 	envelope, err := configbundle.BuildForDevice(accountID, deviceID, devicePublic, uint64(previousVersion+1), 1,
-		now, now.Add(30*24*time.Hour), []configbundle.PlainNode{{ID: "vdsina-1", Provider: "VDSina", Endpoint: settings.Host,
-			Transports: []string{"vless-reality", "hysteria2"}, Access: access}}, keyID, signer)
-	clear(access)
+		now, now.Add(30*24*time.Hour), plainNodes, keyID, signer)
+	for _, node := range plainNodes {
+		clear(node.Access)
+	}
 	if err != nil {
 		return errors.New("could not seal configuration")
 	}
@@ -234,29 +384,30 @@ func provisionDevice(pool *pgxpool.Pool, service *auth.Service, accountID, devic
 		map[string]ed25519.PublicKey{keyID: signer.Public().(ed25519.PublicKey)}, now); err != nil {
 		return errors.New("could not install configuration")
 	}
-	if _, err := guard.Exec(ctx, `DELETE FROM device_provisioning_attempts WHERE device_id=$1`, deviceID); err != nil {
-		return errors.New("could not clear provisioning retry")
+	if !partial {
+		if _, err := guard.Exec(ctx, `DELETE FROM device_provisioning_attempts WHERE device_id=$1`, deviceID); err != nil {
+			return errors.New("could not clear provisioning retry")
+		}
 	}
 	if err := guard.Commit(ctx); err != nil {
 		return errors.New("could not release provisioning lock")
 	}
 	fmt.Println("Configuration installed for device", deviceID)
+	if partial {
+		return errors.New("configuration installed with some VPN nodes pending retry")
+	}
 	return nil
 }
 
-func retireDevice(service *auth.Service, accountID, deviceID string) error {
-	_, panel, err := loadPanel()
+func retireDevice(pool *pgxpool.Pool, service *auth.Service, accountID, deviceID string) error {
+	nodes, err := loadNodes()
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	id := managedClientID(accountID, deviceID)
 	if err := service.RevokeProvisionedDevice(ctx, accountID, deviceID, time.Now().UTC(), func(ctx context.Context) error {
-		if err := panel.Delete(ctx, id); err != nil {
-			return errors.New("could not delete remote VPN client")
-		}
-		return nil
+		return deleteRemoteClients(ctx, pool, accountID, deviceID, nodes)
 	}); err != nil {
 		return err
 	}
