@@ -9,7 +9,7 @@
 - Actions публикует APK на GitHub Releases только после отправки тега в GitHub.
 - Debug-сборка использует прежний debug-ключ Android и не предназначена для распространения. Релизная сборка без личного release-keystore запрещена.
 
-Workflow закрепляет `actions/checkout` полным SHA, а Flutter SDK — версией `3.47.1`. Требуется установленный на GitHub runner Android SDK и JDK 17 или совместимее.
+Workflow закрепляет `actions/checkout` полным SHA версии `v6.0.3`, а Flutter SDK — версией `3.47.9` (Dart 3.13.7, совместим с ограничением проекта). Требуется установленный на GitHub runner Android SDK и JDK 17 или совместимее.
 
 ## Однократная настройка владельцем
 
