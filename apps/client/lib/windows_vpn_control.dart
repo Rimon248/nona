@@ -35,8 +35,9 @@ class WindowsVpnControl {
     }
     _active = true;
     try {
-      // Xray applies the TUN routes during startup. A real HTTPS request then
-      // confirms that the OS is sending traffic through the tunnel.
+      // Xray applies the TUN routes during startup. Keep the independent
+      // latency request as a data-plane check; the website check is reported
+      // separately so one blocked probe host cannot reject a live link.
       await Future<void>.delayed(const Duration(milliseconds: 700));
       await measureLatency();
       return true;

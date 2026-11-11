@@ -19,6 +19,7 @@ import 'configuration_sync.dart';
 import 'configuration_vault.dart';
 import 'desktop_engine_profile.dart';
 import 'engine_profiles.dart';
+import 'macos_compact_secure_storage.dart';
 import 'vpn_action_policy.dart';
 import 'windows_vpn_control.dart';
 
@@ -78,6 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int? _latencyMs;
   bool _measuringLatency = false;
   String? _latencyMessage;
+  String? _websiteProbeMessage;
   int _latencyRequestId = 0;
   Timer? _updateTimer;
   Timer? _vpnHealthTimer;
@@ -98,6 +100,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (_vpnControlsAvailable) _refreshVpnState();
     if (_apiBaseUrl.isEmpty) return;
+    final FlutterSecureStorage oidcSecureStorage = Platform.isMacOS
+        ? MacCompactSecureStorage()
+        : OidcDefaultStore.createHardenedSecureStorage();
+    final secureStringStore = PlatformSecureStringStore(
+      Platform.isMacOS ? oidcSecureStorage : null,
+    );
     try {
       final issuer = Uri.parse(_oidcIssuer);
       if (issuer.scheme != 'https' ||
@@ -114,13 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
         clientCredentials: const OidcClientAuthentication.none(
           clientId: 'nona-client',
         ),
-        store: OidcDefaultStore(
-          secureStorageInstance: Platform.isMacOS
-              ? const FlutterSecureStorage(
-                  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-                )
-              : OidcDefaultStore.createHardenedSecureStorage(),
-        ),
+        store: OidcDefaultStore(secureStorageInstance: oidcSecureStorage),
         settings: OidcUserManagerSettings(
           scope: const ['openid', 'profile', 'email'],
           redirectUri: defaultTargetPlatform == TargetPlatform.windows
@@ -132,7 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _auth = AuthClient(
         baseUri: Uri.parse(_apiBaseUrl),
         httpClient: _http!,
-        secureStore: PlatformSecureStringStore(),
+        secureStore: secureStringStore,
         oidcSession: KeycloakSession(_oidc!),
       );
     } catch (_) {
@@ -147,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
           throw const FormatException('Invalid configuration signing key');
         }
         _vault = ConfigurationVault(
-          PlatformSecureStringStore(),
+          secureStringStore,
           BundleVerifier({_configKeyId: key}),
         );
       } catch (_) {
@@ -365,6 +367,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _busy = true;
       _message = null;
+      _websiteProbeMessage = null;
       _latencyMs = null;
       _latencyMessage = null;
       _measuringLatency = false;
@@ -528,7 +531,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _ => Future<int>.error(StateError('VPN control is unavailable')),
   };
 
-  /// Accept a connection only after it passes an HTTPS request via the TUN.
+  /// Accept a live tunnel; a separate website check only reports reachability.
   Future<bool?> _attemptVpn(Future<bool?> Function() start) async {
     try {
       final started = await start();
@@ -538,14 +541,17 @@ class _HomeScreenState extends State<HomeScreen> {
         await Future<void>.delayed(const Duration(milliseconds: 500));
         _vpnState = await _vpnStatus();
         if (_vpnState == 'connected') {
-          try {
-            if (defaultTargetPlatform != TargetPlatform.macOS) {
+          if (defaultTargetPlatform != TargetPlatform.macOS) {
+            try {
               await _probeWebTraffic();
+              _websiteProbeMessage = null;
+            } catch (_) {
+              // A single blocked or unreachable test website must not make a
+              // running VPN channel appear unavailable.
+              _websiteProbeMessage = 'Туннель подключён, но сайт проверки не открылся. Проверьте YouTube.';
             }
-            return true;
-          } catch (_) {
-            break;
           }
+          return true;
         }
         if (_vpnState == 'error') break;
       }
@@ -571,6 +577,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _busy = true;
       _latencyMs = null;
       _latencyMessage = null;
+      _websiteProbeMessage = null;
       _measuringLatency = false;
       _latencyRequestId++;
       _vpnHealthFailures = 0;
@@ -656,8 +663,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     try {
       await _measureVpn();
-      await _probeWebTraffic();
       _vpnHealthFailures = 0;
+      try {
+        await _probeWebTraffic();
+        if (_websiteProbeMessage != null && mounted) {
+          setState(() => _websiteProbeMessage = null);
+        }
+      } catch (_) {
+        if (mounted && _websiteProbeMessage == null) {
+          setState(
+            () => _websiteProbeMessage = 'Туннель подключён, но сайт проверки не открылся. Проверьте YouTube.',
+          );
+        }
+      }
     } catch (_) {
       _vpnHealthFailures++;
       if (_vpnHealthFailures >= 2) await _switchToFallback();
@@ -983,6 +1001,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         if (_vpnState == 'connected') ...[
+                          if (_websiteProbeMessage != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _websiteProbeMessage!,
+                              style: TextStyle(color: scheme.error),
+                            ),
+                          ],
                           const SizedBox(height: 12),
                           OutlinedButton.icon(
                             onPressed: _busy || _measuringLatency

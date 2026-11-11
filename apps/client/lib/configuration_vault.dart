@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'config_bundle.dart';
 import 'credential_box.dart';
+import 'macos_compact_secure_storage.dart';
 import 'node_access.dart';
 
 abstract interface class SecureStringStore {
@@ -25,9 +26,7 @@ class PlatformSecureStringStore implements SecureStringStore {
     : _storage =
           storage ??
           (Platform.isMacOS
-              ? const FlutterSecureStorage(
-                  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-                )
+              ? MacCompactSecureStorage()
               : const FlutterSecureStorage());
 
   final FlutterSecureStorage _storage;
