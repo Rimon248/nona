@@ -223,11 +223,16 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasUsableConfiguration = false;
       _configurationMessage =
           'Не удалось проверить подпись или срок обновления';
-    } catch (_) {
-      if (auth.vpnAccessStatus == 'deleting') {
+    } catch (error) {
+      if (error is AuthException &&
+          (auth.vpnAccessStatus == 'deleting' ||
+              error.message == 'Sign in required' ||
+              error.message == 'Account unavailable')) {
         _hasUsableConfiguration = false;
         await vault.clear();
-        _configurationMessage = 'Аккаунт удалён';
+        _configurationMessage = auth.vpnAccessStatus == 'deleting'
+            ? 'Аккаунт удалён'
+            : 'Войдите в аккаунт снова';
         return;
       }
       try {
