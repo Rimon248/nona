@@ -119,9 +119,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         settings: OidcUserManagerSettings(
           scope: const ['openid', 'profile', 'email'],
-          redirectUri: defaultTargetPlatform == TargetPlatform.windows
+          redirectUri:
+              defaultTargetPlatform == TargetPlatform.windows ||
+                  defaultTargetPlatform == TargetPlatform.macOS
               ? Uri.parse('http://127.0.0.1:0')
               : Uri.parse('ru.basketref.nona://oauth2redirect'),
+          options: const OidcPlatformSpecificOptions(
+            macos: OidcNativeOptionsApple(
+              navigationMode: OidcAppleNavigationMode.loopbackSystemBrowser,
+            ),
+          ),
         ),
       );
       _http = http.Client();
@@ -565,8 +572,17 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         );
       }
-    } catch (_) {
-      if (mounted) setState(() => _message = 'Сервер аккаунтов недоступен');
+    } catch (error) {
+      if (mounted) {
+        final category = error is PlatformException
+            ? 'ошибка macOS ${error.code}'
+            : error.runtimeType.toString();
+        setState(
+          () => _message = defaultTargetPlatform == TargetPlatform.macOS
+              ? 'Не удалось завершить вход ($category)'
+              : 'Сервер аккаунтов недоступен',
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
