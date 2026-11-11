@@ -96,6 +96,13 @@ func (s *Service) CheckOIDCSchema(ctx context.Context) error {
 	if count != 3 {
 		return errors.New("OIDC or VPN access migration is missing")
 	}
+	var retryTable *string
+	if err := s.pool.QueryRow(ctx, `SELECT to_regclass('public.device_provisioning_attempts')::text`).Scan(&retryTable); err != nil {
+		return err
+	}
+	if retryTable == nil {
+		return errors.New("provisioning retry migration is missing")
+	}
 	return nil
 }
 

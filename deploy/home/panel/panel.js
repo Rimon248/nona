@@ -52,12 +52,15 @@ function userRow(user, canManageOperators) {
   name.textContent = user.username;
   const detail = document.createElement('small');
   detail.textContent = `${user.active_devices} устройств · ${user.ready_devices} конфигураций`;
+  if (user.retrying_devices > 0) detail.textContent += ` · повторяем выдачу: ${user.retrying_devices}`;
   if (user.operator) detail.textContent += ' · Администратор';
   identity.append(name, detail);
   const status = document.createElement('span');
   status.className = `access-status ${user.status}`;
-  status.textContent = user.status === 'approved' && user.active_devices > user.ready_devices
-    ? 'Доступ разрешён · настройка ожидается'
+  status.textContent = user.status === 'approved' && user.retrying_devices > 0
+    ? 'Доступ разрешён · повторяем выдачу'
+    : user.status === 'approved' && user.active_devices > user.ready_devices
+      ? 'Доступ разрешён · настройка ожидается'
     : accessLabels[user.status] || 'Неизвестно';
   const actions = document.createElement('div');
   actions.className = 'user-actions';

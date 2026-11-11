@@ -22,6 +22,7 @@ type AccountAccess struct {
 	ActiveDevices     int       `json:"active_devices"`
 	ReadyDevices      int       `json:"ready_devices"`
 	RemoteCredentials int       `json:"remote_credentials"`
+	RetryingDevices   int       `json:"retrying_devices"`
 }
 
 func (s *Service) AccessStatus(ctx context.Context, accountID string) (string, error) {
@@ -37,10 +38,12 @@ func (s *Service) ListAccounts(ctx context.Context) ([]AccountAccess, error) {
 	rows, err := s.pool.Query(ctx, `SELECT a.id, COALESCE(a.display_username,a.username), a.oidc_subject, a.vpn_access_status, a.created_at,
 		count(DISTINCT d.id) FILTER (WHERE d.revoked_at IS NULL),
 		count(DISTINCT c.device_id) FILTER (WHERE d.revoked_at IS NULL AND c.expires_at>now()),
-		count(DISTINCT r.device_id) FILTER (WHERE d.revoked_at IS NULL)
+		count(DISTINCT r.device_id) FILTER (WHERE d.revoked_at IS NULL),
+		count(DISTINCT p.device_id) FILTER (WHERE d.revoked_at IS NULL)
 		FROM accounts a LEFT JOIN devices d ON d.account_id=a.id
 		LEFT JOIN device_configurations c ON c.device_id=d.id
 		LEFT JOIN device_remote_credentials r ON r.device_id=d.id
+		LEFT JOIN device_provisioning_attempts p ON p.device_id=d.id
 		WHERE a.oidc_subject IS NOT NULL AND a.disabled_at IS NULL
 		GROUP BY a.id ORDER BY a.created_at DESC LIMIT 500`)
 	if err != nil {
@@ -51,7 +54,7 @@ func (s *Service) ListAccounts(ctx context.Context) ([]AccountAccess, error) {
 	for rows.Next() {
 		var item AccountAccess
 		if err := rows.Scan(&item.ID, &item.Username, &item.Subject, &item.Status, &item.CreatedAt,
-			&item.ActiveDevices, &item.ReadyDevices, &item.RemoteCredentials); err != nil {
+			&item.ActiveDevices, &item.ReadyDevices, &item.RemoteCredentials, &item.RetryingDevices); err != nil {
 			return nil, err
 		}
 		result = append(result, item)

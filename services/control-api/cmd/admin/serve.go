@@ -191,6 +191,43 @@ func removeDeviceAccess(pool *pgxpool.Pool, accountID, deviceID string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM device_remote_credentials WHERE device_id=$1`, deviceID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM device_provisioning_attempts WHERE device_id=$1`, deviceID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func provisioningRetryDelay(attempts int) time.Duration {
+	if attempts <= 1 {
+		return time.Minute
+	}
+	delay := time.Minute * time.Duration(1<<min(attempts-1, 4))
+	if delay > 15*time.Minute {
+		return 15 * time.Minute
+	}
+	return delay
+}
+
+func recordProvisionFailure(ctx context.Context, pool *pgxpool.Pool, deviceID string) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var attempts int
+	err = tx.QueryRow(ctx, `INSERT INTO device_provisioning_attempts
+		(device_id, attempts, last_failed_at, next_attempt_at) VALUES ($1,1,now(),now())
+		ON CONFLICT (device_id) DO UPDATE SET
+		attempts=LEAST(device_provisioning_attempts.attempts+1,1000), last_failed_at=now()
+		RETURNING attempts`, deviceID).Scan(&attempts)
+	if err != nil {
+		return err
+	}
+	seconds := int(provisioningRetryDelay(attempts).Seconds())
+	if _, err := tx.Exec(ctx, `UPDATE device_provisioning_attempts
+		SET next_attempt_at=now()+$2*interval '1 second' WHERE device_id=$1`, deviceID, seconds); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -252,8 +289,10 @@ func reconcileAccess(pool *pgxpool.Pool, service *auth.Service) error {
 	rows, err = pool.Query(ctx, `SELECT d.account_id, d.id FROM devices d
 		JOIN accounts a ON a.id=d.account_id
 		LEFT JOIN device_configurations c ON c.device_id=d.id
+		LEFT JOIN device_provisioning_attempts p ON p.device_id=d.id
 		WHERE a.vpn_access_status='approved' AND a.oidc_subject IS NOT NULL
 		AND d.revoked_at IS NULL AND (c.device_id IS NULL OR c.expires_at<now()+interval '7 days')
+		AND (p.device_id IS NULL OR p.next_attempt_at<=now())
 		ORDER BY d.created_at LIMIT 10`)
 	if err != nil {
 		return err
@@ -275,7 +314,10 @@ func reconcileAccess(pool *pgxpool.Pool, service *auth.Service) error {
 	rows.Close()
 	for _, item := range pendingDevices {
 		if err := provisionDevice(pool, service, item.account, item.device); err != nil {
-			log.Printf("could not provision VPN device %s", item.device)
+			if retryErr := recordProvisionFailure(ctx, pool, item.device); retryErr != nil {
+				return errors.New("could not schedule provisioning retry")
+			}
+			log.Printf("VPN provisioning deferred for device %s", item.device)
 		}
 	}
 	return nil

@@ -234,6 +234,9 @@ func provisionDevice(pool *pgxpool.Pool, service *auth.Service, accountID, devic
 		map[string]ed25519.PublicKey{keyID: signer.Public().(ed25519.PublicKey)}, now); err != nil {
 		return errors.New("could not install configuration")
 	}
+	if _, err := guard.Exec(ctx, `DELETE FROM device_provisioning_attempts WHERE device_id=$1`, deviceID); err != nil {
+		return errors.New("could not clear provisioning retry")
+	}
 	if err := guard.Commit(ctx); err != nil {
 		return errors.New("could not release provisioning lock")
 	}
