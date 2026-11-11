@@ -354,6 +354,34 @@ class _AppListPage extends StatefulWidget {
 class _AppListPageState extends State<_AppListPage> {
   late InternetPolicy _policy = widget.policy;
   String _search = '';
+  bool _selectingAll = false;
+
+  Future<void> _selectAll() async {
+    if (_selectingAll) return;
+    setState(() => _selectingAll = true);
+    final ids = widget.data.apps.map((app) => app.packageName).toSet();
+    final next = InternetPolicy(
+      sitesMode: _policy.sitesMode,
+      appsMode: _policy.appsMode,
+      siteOverrides: _policy.siteOverrides,
+      appOverrides: {for (final id in ids) id: true},
+      customSites: _policy.customSites,
+    );
+    try {
+      if (await widget.save(next) && mounted) {
+        setState(() => _policy = next);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Отмечено приложений: ${ids.length}. Переподключите VPN, чтобы применить.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _selectingAll = false);
+    }
+  }
 
   Future<void> _set(String id, bool direct) async {
     final next = _policy.withApp(id, direct, widget.data.appCatalogue);
@@ -403,6 +431,18 @@ class _AppListPageState extends State<_AppListPage> {
                   : 'Отмеченные приложения полностью обходят VPN, в том числе в фоне. Список установленных программ читается только на устройстве и не отправляется на сервер.',
             ),
           ),
+          if (!widget.russianOnly)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _selectingAll ? null : _selectAll,
+                  icon: const Icon(Icons.select_all),
+                  label: const Text('Выбрать все'),
+                ),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(16),
             child: TextField(

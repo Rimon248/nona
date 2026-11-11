@@ -4,6 +4,26 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseStoreFile = providers.environmentVariable("NONA_ANDROID_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("NONA_ANDROID_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("NONA_ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("NONA_ANDROID_KEY_PASSWORD").orNull
+val releaseSigningValues = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+)
+val isReleaseRequested = gradle.startParameter.taskNames.any {
+    it.substringAfterLast(":").contains("Release", ignoreCase = true)
+}
+if (isReleaseRequested && releaseSigningValues.any { it.isNullOrBlank() }) {
+    throw GradleException(
+        "Android release signing is missing. Set NONA_ANDROID_KEYSTORE_PATH, " +
+            "NONA_ANDROID_STORE_PASSWORD, NONA_ANDROID_KEY_ALIAS and NONA_ANDROID_KEY_PASSWORD."
+    )
+}
+
 android {
     namespace = "com.example.nona_client"
     compileSdk = flutter.compileSdkVersion
@@ -15,8 +35,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.nona_client"
+        applicationId = "ru.basketref.nona"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -30,11 +49,20 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseSigningValues.all { !it.isNullOrBlank() }) {
+                storeFile = file(requireNotNull(releaseStoreFile))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

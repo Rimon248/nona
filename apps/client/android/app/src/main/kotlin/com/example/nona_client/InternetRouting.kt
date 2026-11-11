@@ -123,7 +123,9 @@ internal object InternetRouting {
         val siteRaw = raw["siteOverrides"] as? Map<*, *> ?: error("Invalid site overrides")
         val appRaw = raw["appOverrides"] as? Map<*, *> ?: error("Invalid app overrides")
         val customRaw = raw["customSites"] as? List<*> ?: error("Invalid custom sites")
-        require(siteRaw.size <= sites.size && appRaw.size <= 500 && customRaw.size <= 200)
+        // "Select all" can include every launchable package on a device; keep a
+        // generous bound to reject malformed payloads without blocking that use.
+        require(siteRaw.size <= sites.size && appRaw.size <= 2000 && customRaw.size <= 200)
         val siteIds = sites.map { it.domain }.toSet()
         val siteOverrides = siteRaw.map { (key, value) ->
             require(key is String && key in siteIds && value is Boolean)
@@ -194,8 +196,9 @@ internal object InternetRouting {
     fun directPackages(context: Context): List<String> {
         val policy = read(context)
         val catalogue = apps.associateBy { it.id }
-        val candidates = visibleApps(context).mapNotNull { it["packageName"] }.toMutableSet()
-        candidates.addAll(policy.appOverrides.filterValues { it }.keys)
+        // Only pass installed packages to VpnService.Builder. Stale saved rules
+        // for apps the user removed can make addDisallowedApplication fail.
+        val candidates = visibleApps(context).mapNotNull { it["packageName"] }.toSet()
         return candidates.filter { id ->
             policy.appOverrides[id] ?: when (policy.appsMode) {
                 "all" -> id.startsWith("ru.") || catalogue.containsKey(id)

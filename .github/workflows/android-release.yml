@@ -1,0 +1,78 @@
+name: Android release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter 3.47.1
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 3.47.1 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
+
+      - name: Verify Android build tools
+        shell: bash
+        run: |
+          java -version
+          test -n "${ANDROID_HOME:-}"
+
+      - name: Build signed APK
+        shell: bash
+        env:
+          NONA_ANDROID_KEYSTORE_BASE64: ${{ secrets.NONA_ANDROID_KEYSTORE_BASE64 }}
+          NONA_ANDROID_STORE_PASSWORD: ${{ secrets.NONA_ANDROID_STORE_PASSWORD }}
+          NONA_ANDROID_KEY_ALIAS: ${{ secrets.NONA_ANDROID_KEY_ALIAS }}
+          NONA_ANDROID_KEY_PASSWORD: ${{ secrets.NONA_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in NONA_ANDROID_KEYSTORE_BASE64 NONA_ANDROID_STORE_PASSWORD NONA_ANDROID_KEY_ALIAS NONA_ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+          app_version="$(sed -n 's/^version: *//p' apps/client/pubspec.yaml)"
+          app_version_name="${app_version%%+*}"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$app_version_name" != "$tag_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME must match pubspec version $app_version_name" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/nona-signing"
+          printf '%s' "$NONA_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/nona-signing/upload.jks"
+          chmod 600 "$RUNNER_TEMP/nona-signing/upload.jks"
+          export NONA_ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/nona-signing/upload.jks"
+          apps/client/build-android-release.sh
+          mkdir -p dist
+          cp apps/client/build/app/outputs/flutter-apk/app-release.apk "dist/nona-${GITHUB_REF_NAME}-android.apk"
+          sha256sum "dist/nona-${GITHUB_REF_NAME}-android.apk" > "dist/nona-${GITHUB_REF_NAME}-android.apk.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/nona-${GITHUB_REF_NAME}-android.apk#Нона для Android" \
+            "dist/nona-${GITHUB_REF_NAME}-android.apk.sha256#SHA-256" \
+            --title "Нона ${GITHUB_REF_NAME}" \
+            --generate-notes
