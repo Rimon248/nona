@@ -73,6 +73,11 @@ jobs:
           if (-not (Test-Path (Join-Path $bundle 'nona_client.exe'))) {
             throw 'Windows application bundle was not produced.'
           }
+          foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            if (-not (Test-Path (Join-Path $bundle $name))) {
+              throw "Windows runtime dependency is missing: $name"
+            }
+          }
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path "$bundle/*" -DestinationPath dist/nona-windows-preview.zip -Force
           (Get-FileHash dist/nona-windows-preview.zip -Algorithm SHA256).Hash.ToLower() + '  nona-windows-preview.zip' |
