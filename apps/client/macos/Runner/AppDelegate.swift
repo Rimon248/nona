@@ -209,7 +209,8 @@ final class MacOSVpnControl: NSObject {
       )
     }
     commands.append("stage=engine")
-    commands.append("/usr/bin/nohup \(executable) run -config \(configPath) >\(shellQuote(logURL.path)) 2>&1 </dev/null &")
+    let child = "trap '' HUP; exec \(executable) run -config \(configPath)"
+    commands.append("/bin/sh -c \(shellQuote(child)) >\(shellQuote(logURL.path)) 2>&1 </dev/null &")
     commands.append("pid=$!")
     commands.append("stage=tun")
     commands.append("i=0; while [ $i -lt 32 ]; do if /sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1; then break; fi; if ! /bin/kill -0 $pid 2>/dev/null; then exit 1; fi; /bin/sleep 0.25; i=$((i+1)); done")
