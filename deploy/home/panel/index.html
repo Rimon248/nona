@@ -32,7 +32,7 @@
           <div class="status-list">
             <div class="status-row"><div><strong>Вход пользователей</strong><small>Отдельный Keycloak Ноны</small></div><span id="identity" class="state">Проверка</span></div>
             <div class="status-row"><div><strong>API устройств</strong><small>Регистрация и выдача подписанных пакетов</small></div><span id="api" class="state">Проверка</span></div>
-            <div class="status-row"><div><strong>Выдача VPN-доступа</strong><small>Создание и отзыв данных на VDSina</small></div><span id="provisioning" class="state">Проверка</span></div>
+            <div class="status-row"><div><strong>Выдача конфигураций</strong><small>Автоматическая обработка заявок; связь с VPN-узлом здесь не проверяется</small></div><span id="provisioning" class="state">Проверка</span></div>
           </div>
         </section>
         <section class="users-section" aria-labelledby="users-title">
@@ -42,7 +42,7 @@
         </section>
         <section class="next-section" aria-labelledby="next-title">
           <h2 id="next-title">Выдача доступа</h2>
-          <p>После одобрения Нона создаёт отдельную конфигурацию для каждого зарегистрированного устройства. При отзыве доступа удаляет данные подключения на VDSina. Обновление может занять несколько минут.</p>
+          <p>После одобрения Нона создаёт отдельную конфигурацию для каждого зарегистрированного устройства. При отзыве доступа удаляет данные подключения на VDSina. Обновление может занять несколько минут. Готовая конфигурация сама по себе не подтверждает работу VPN-соединения.</p>
           <a href="/v1/info" target="_blank" rel="noopener noreferrer">Открыть состояние API</a>
         </section>
       </main>

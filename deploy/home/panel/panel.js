@@ -31,7 +31,7 @@ async function refresh() {
   const apiReady = api.status === 'fulfilled' && api.value.authentication === 'keycloak';
   show(states.api, apiReady ? 'Работает' : 'Недоступен', apiReady ? 'ok' : 'error');
   show(states.provisioning,
-    apiReady && api.value.provisioning_enabled === true ? 'Включена' : 'Пока выключена',
+    apiReady && api.value.provisioning_enabled === true ? 'Служба запущена' : 'Пока выключена',
     apiReady && api.value.provisioning_enabled === true ? 'ok' : 'wait');
   checked.textContent = 'Проверено: ' + new Intl.DateTimeFormat('ru-RU', {dateStyle:'medium',timeStyle:'short'}).format(new Date());
   button.disabled = false;
@@ -51,12 +51,14 @@ function userRow(user, canManageOperators) {
   const name = document.createElement('strong');
   name.textContent = user.username;
   const detail = document.createElement('small');
-  detail.textContent = `${user.active_devices} устройств · ${user.ready_devices} готовы`;
+  detail.textContent = `${user.active_devices} устройств · ${user.ready_devices} конфигураций`;
   if (user.operator) detail.textContent += ' · Администратор';
   identity.append(name, detail);
   const status = document.createElement('span');
   status.className = `access-status ${user.status}`;
-  status.textContent = accessLabels[user.status] || 'Неизвестно';
+  status.textContent = user.status === 'approved' && user.active_devices > user.ready_devices
+    ? 'Доступ разрешён · настройка ожидается'
+    : accessLabels[user.status] || 'Неизвестно';
   const actions = document.createElement('div');
   actions.className = 'user-actions';
   if (user.status === 'pending' || user.status === 'denied') {
