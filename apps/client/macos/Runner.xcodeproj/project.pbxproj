@@ -211,6 +211,7 @@
 				33CC10E92044A3C60003C045 /* Sources */,
 				33CC10EA2044A3C60003C045 /* Frameworks */,
 				33CC10EB2044A3C60003C045 /* Resources */,
+				A1E93E410000000000000001 /* Copy VPN Engine */,
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
 			);
@@ -301,6 +302,24 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		A1E93E410000000000000001 /* Copy VPN Engine */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nENGINE_SOURCE=\"$PROJECT_DIR/Runner/engine\"\nENGINE_DEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/engine\"\nfor file in xray Xray-Core-LICENSE.txt; do\n  if [ ! -f \"$ENGINE_SOURCE/$file\" ]; then\n    echo \"Missing pinned macOS VPN engine: $ENGINE_SOURCE/$file\" >&2\n    echo \"Run apps/client/macos/prepare-engine.sh before building.\" >&2\n    exit 1\n  fi\ndone\nmkdir -p \"$ENGINE_DEST\"\ncp \"$ENGINE_SOURCE/xray\" \"$ENGINE_DEST/xray\"\ncp \"$ENGINE_SOURCE/Xray-Core-LICENSE.txt\" \"$ENGINE_DEST/Xray-Core-LICENSE.txt\"\nchmod 755 \"$ENGINE_DEST/xray\"\n";
+		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

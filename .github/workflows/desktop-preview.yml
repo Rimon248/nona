@@ -1,0 +1,82 @@
+name: Desktop preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/desktop-preview.yml'
+      - 'apps/client/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter 3.47.9
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
+
+      - name: Build macOS TUN app
+        shell: bash
+        run: |
+          set -euo pipefail
+          apps/client/build-macos-release.sh
+          app=apps/client/build/macos/Build/Products/Release/Nona.app
+          test -d "$app"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$app" dist/nona-macos-preview.zip
+          shasum -a 256 dist/nona-macos-preview.zip > dist/nona-macos-preview.zip.sha256
+
+      - name: Upload macOS preview
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: nona-macos-preview
+          path: dist/nona-macos-preview.zip*
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2025
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter 3.47.9
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$env:RUNNER_TEMP/flutter"
+          "$env:RUNNER_TEMP/flutter/bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & "$env:RUNNER_TEMP/flutter/bin/flutter.bat" config --no-analytics
+
+      - name: Build Windows TUN app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./apps/client/build-windows-release.ps1
+          $bundle = 'apps/client/build/windows/x64/runner/Release'
+          if (-not (Test-Path (Join-Path $bundle 'nona_client.exe'))) {
+            throw 'Windows application bundle was not produced.'
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "$bundle/*" -DestinationPath dist/nona-windows-preview.zip -Force
+          (Get-FileHash dist/nona-windows-preview.zip -Algorithm SHA256).Hash.ToLower() + '  nona-windows-preview.zip' |
+            Set-Content dist/nona-windows-preview.zip.sha256
+
+      - name: Upload Windows preview
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: nona-windows-preview
+          path: dist/nona-windows-preview.zip*
+          if-no-files-found: error

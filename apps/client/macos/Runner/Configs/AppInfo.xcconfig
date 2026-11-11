@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = nona_client
+PRODUCT_NAME = Nona
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.nonaClient
+PRODUCT_BUNDLE_IDENTIFIER = ru.basketref.nona
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 BasketRef. All rights reserved.

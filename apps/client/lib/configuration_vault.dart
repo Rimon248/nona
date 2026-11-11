@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -16,7 +17,13 @@ abstract interface class SecureStringStore {
 /// or Apple Packet Tunnel extension needs explicit native configuration.
 class PlatformSecureStringStore implements SecureStringStore {
   PlatformSecureStringStore([FlutterSecureStorage? storage])
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage =
+          storage ??
+          (Platform.isMacOS
+              ? const FlutterSecureStorage(
+                  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+                )
+              : const FlutterSecureStorage());
 
   final FlutterSecureStorage _storage;
 

@@ -19,6 +19,21 @@ add_executable(${BINARY_NAME} WIN32
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
+target_link_libraries(${BINARY_NAME} PRIVATE shell32)
+
+set(NONA_WINDOWS_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/engine")
+foreach(NONA_WINDOWS_ENGINE_FILE IN ITEMS
+    "${NONA_WINDOWS_ENGINE_DIR}/libXray.dll"
+    "${NONA_WINDOWS_ENGINE_DIR}/wintun.dll"
+    "${NONA_WINDOWS_ENGINE_DIR}/Xray-Core-LICENSE.txt"
+    "${NONA_WINDOWS_ENGINE_DIR}/Wintun-LICENSE.txt"
+    "${NONA_WINDOWS_ENGINE_DIR}/libXray-LICENSE.txt")
+  if(NOT EXISTS "${NONA_WINDOWS_ENGINE_FILE}")
+    message(FATAL_ERROR
+      "Missing pinned Nona VPN engine file: ${NONA_WINDOWS_ENGINE_FILE}. "
+      "Run apps/client/windows/prepare-engine.ps1 before building Windows.")
+  endif()
+endforeach()
 
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")

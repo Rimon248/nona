@@ -1,19 +1,26 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:oidc/oidc.dart';
 import 'package:oidc_default_store/oidc_default_store.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'internet_routing_screen.dart';
+import 'macos_vpn_control.dart';
 import 'android_vpn_control.dart';
 import 'auth_client.dart';
 import 'config_bundle.dart';
 import 'configuration_sync.dart';
 import 'configuration_vault.dart';
+import 'desktop_engine_profile.dart';
+import 'engine_profiles.dart';
 import 'vpn_action_policy.dart';
+import 'windows_vpn_control.dart';
 
 void main() => runApp(const NonaApp());
 
@@ -57,6 +64,8 @@ class _HomeScreenState extends State<HomeScreen> {
   AuthClient? _auth;
   ConfigurationVault? _vault;
   final AndroidVpnControl _androidVpn = AndroidVpnControl();
+  final WindowsVpnControl _windowsVpn = WindowsVpnControl.instance;
+  final MacOSVpnControl _macVpn = MacOSVpnControl.instance;
   String? _deviceId;
   String? _message;
   String _configurationMessage = 'На этом устройстве пока не сохранены';
@@ -70,9 +79,20 @@ class _HomeScreenState extends State<HomeScreen> {
   int _latencyRequestId = 0;
   Timer? _updateTimer;
 
+  static const MethodChannel _trayChannel = MethodChannel('nona.tray');
+
+  bool get _vpnControlsAvailable =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.macOS;
+
   @override
   void initState() {
     super.initState();
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      _trayChannel.setMethodCallHandler(_handleTrayCall);
+    }
+    if (_vpnControlsAvailable) _refreshVpnState();
     if (_apiBaseUrl.isEmpty) return;
     try {
       final issuer = Uri.parse(_oidcIssuer);
@@ -91,7 +111,11 @@ class _HomeScreenState extends State<HomeScreen> {
           clientId: 'nona-client',
         ),
         store: OidcDefaultStore(
-          secureStorageInstance: OidcDefaultStore.createHardenedSecureStorage(),
+          secureStorageInstance: Platform.isMacOS
+              ? const FlutterSecureStorage(
+                  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+                )
+              : OidcDefaultStore.createHardenedSecureStorage(),
         ),
         settings: OidcUserManagerSettings(
           scope: const ['openid', 'profile', 'email'],
@@ -132,15 +156,27 @@ class _HomeScreenState extends State<HomeScreen> {
         _checkUpdates();
       }
     });
-    if (defaultTargetPlatform == TargetPlatform.android) _refreshVpnState();
   }
 
   @override
   void dispose() {
     _updateTimer?.cancel();
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      _trayChannel.setMethodCallHandler(null);
+    }
     _oidc?.dispose();
     _http?.close();
     super.dispose();
+  }
+
+  Future<void> _handleTrayCall(MethodCall call) async {
+    if (call.method != 'requestExit') return;
+    if (_vpnState != 'idle') await _disconnectVpn();
+    if (_vpnState == 'idle') {
+      await _trayChannel.invokeMethod<void>('exitNow');
+    } else {
+      await _trayChannel.invokeMethod<void>('cancelExit');
+    }
   }
 
   Future<void> _restore() async {
@@ -196,9 +232,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (access != null && access != 'approved') {
       _hasUsableConfiguration = false;
       await vault.clear();
-      if (_vpnState != 'idle' &&
-          defaultTargetPlatform == TargetPlatform.android) {
-        await _androidVpn.stop();
+      if (_vpnState != 'idle' && _vpnControlsAvailable) {
+        await _stopVpn();
         _vpnState = 'idle';
         _vpnTransport = null;
       }
@@ -268,7 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _refreshVpnState() async {
     try {
-      final state = await _androidVpn.status();
+      final state = await _vpnStatus();
       if (mounted) setState(() => _vpnState = state);
     } catch (_) {
       if (mounted) setState(() => _vpnState = 'error');
@@ -322,17 +357,11 @@ class _HomeScreenState extends State<HomeScreen> {
           deviceSeed: seed,
           now: DateTime.now(),
         );
-        final candidates = <({String name, Future<bool> Function() start})>[
+        final candidates = <({String name, Future<bool?> Function() start})>[
           if (access.hysteria2 != null)
-            (
-              name: 'Hysteria2',
-              start: () => _androidVpn.connectHysteria(access.hysteria2!),
-            ),
+            (name: 'Hysteria2', start: () => _startHysteria(access.hysteria2!)),
           if (access.vlessReality != null)
-            (
-              name: 'VLESS',
-              start: () => _androidVpn.connect(access.vlessReality!),
-            ),
+            (name: 'VLESS', start: () => _startVless(access.vlessReality!)),
         ];
         for (final candidate in candidates) {
           final result = await _attemptVpn(candidate.start);
@@ -349,7 +378,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       if (!connected) {
         _message = declined
-            ? 'Подключение отменено в настройках Android'
+            ? 'Подключение отменено в системном запросе'
             : 'Ни один VPN-канал сейчас не отвечает';
       }
     } catch (_) {
@@ -360,27 +389,93 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// A native connection is accepted only after it passes a request through
-  /// the VPN network. The service reports an error and closes its TUN on fail.
-  Future<bool?> _attemptVpn(Future<bool> Function() start) async {
+  Future<bool?> _startHysteria(Hysteria2Profile profile) async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return await _androidVpn.connectHysteria(profile) ? true : null;
+    }
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      return _windowsVpn.connect(
+        DesktopEngineProfile.windowsTun(
+          profile.xrayConfigJson(localSocksPort: 10808),
+        ),
+      );
+    }
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      return _macVpn.connect(
+        DesktopEngineProfile.macOsTun(
+          profile.xrayConfigJson(localSocksPort: 10808),
+          tunName: 'utun10',
+        ),
+      );
+    }
+    return false;
+  }
+
+  Future<bool?> _startVless(VlessRealityProfile profile) async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return await _androidVpn.connect(profile) ? true : null;
+    }
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      return _windowsVpn.connect(
+        DesktopEngineProfile.windowsTun(
+          profile.configJson(localSocksPort: 10808),
+        ),
+      );
+    }
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      return _macVpn.connect(
+        DesktopEngineProfile.macOsTun(
+          profile.configJson(localSocksPort: 10808),
+          tunName: 'utun10',
+        ),
+      );
+    }
+    return false;
+  }
+
+  Future<String> _vpnStatus() => switch (defaultTargetPlatform) {
+    TargetPlatform.android => _androidVpn.status(),
+    TargetPlatform.windows => _windowsVpn.status(),
+    TargetPlatform.macOS => _macVpn.status(),
+    _ => Future<String>.value('idle'),
+  };
+
+  Future<void> _stopVpn() => switch (defaultTargetPlatform) {
+    TargetPlatform.android => _androidVpn.stop(),
+    TargetPlatform.windows => _windowsVpn.stop(),
+    TargetPlatform.macOS => _macVpn.stop(),
+    _ => Future<void>.value(),
+  };
+
+  Future<int> _measureVpn() => switch (defaultTargetPlatform) {
+    TargetPlatform.android => _androidVpn.measureLatency(),
+    TargetPlatform.windows => _windowsVpn.measureLatency(),
+    TargetPlatform.macOS => _macVpn.measureLatency(),
+    _ => Future<int>.error(StateError('VPN control is unavailable')),
+  };
+
+  /// Accept a connection only after it passes an HTTPS request via the TUN.
+  Future<bool?> _attemptVpn(Future<bool?> Function() start) async {
     try {
-      if (!await start()) return null;
+      final started = await start();
+      if (started == null) return null;
+      if (!started) return false;
       for (var attempt = 0; attempt < 30; attempt++) {
         await Future<void>.delayed(const Duration(milliseconds: 500));
-        _vpnState = await _androidVpn.status();
+        _vpnState = await _vpnStatus();
         if (_vpnState == 'connected') return true;
         if (_vpnState == 'error') break;
       }
     } catch (_) {
       // Try the next transport after the current service has been stopped.
     }
-    await _androidVpn.stop();
+    await _stopVpn();
     for (var attempt = 0; attempt < 20; attempt++) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      _vpnState = await _androidVpn.status();
+      _vpnState = await _vpnStatus();
       if (_vpnState == 'idle') return false;
     }
-    throw StateError('Android VPN did not stop');
+    throw StateError('VPN did not stop');
   }
 
   Future<void> _disconnectVpn() async {
@@ -392,15 +487,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _latencyRequestId++;
     });
     try {
-      await _androidVpn.stop();
+      await _stopVpn();
       for (var attempt = 0; attempt < 20; attempt++) {
         await Future<void>.delayed(const Duration(milliseconds: 250));
-        _vpnState = await _androidVpn.status();
+        _vpnState = await _vpnStatus();
         if (_vpnState == 'idle') break;
       }
       _message = _vpnState == 'idle'
           ? null
-          : 'Android ещё завершает VPN. Повторите отключение.';
+          : 'Система ещё завершает VPN. Повторите отключение.';
       if (_vpnState == 'idle') _vpnTransport = null;
     } catch (_) {
       _message = 'Не удалось остановить VPN';
@@ -418,8 +513,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _latencyMessage = null;
     });
     try {
-      final milliseconds = await _androidVpn.measureLatency();
-      final state = await _androidVpn.status();
+      final milliseconds = await _measureVpn();
+      final state = await _vpnStatus();
       if (!mounted || requestId != _latencyRequestId) return;
       setState(() {
         _vpnState = state;
@@ -489,8 +584,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _latencyRequestId++;
     });
     try {
-      if (defaultTargetPlatform == TargetPlatform.android) {
-        await _androidVpn.stop();
+      if (_vpnControlsAvailable) {
+        await _stopVpn();
         _vpnState = 'idle';
       }
       await auth.logout();
@@ -629,9 +724,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      if (defaultTargetPlatform == TargetPlatform.android &&
-                          _deviceId != null &&
-                          _vault != null) ...[
+                      if (_vpnControlsAvailable &&
+                          (_vpnState != 'idle' ||
+                              (_deviceId != null && _vault != null))) ...[
                         FilledButton(
                           onPressed: _busy
                               ? null
@@ -689,7 +784,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ],
                       ] else
-                        const Text(
+                        Text(
                           'Подключение появится после входа и получения конфигурации.',
                         ),
                     ],

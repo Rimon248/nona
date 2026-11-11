@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   cryptography: ^2.9.0
+  ffi: ^2.1.4
   flutter_secure_storage: ^11.2.0
   http: ^1.6.0
   oidc: ^5.0.2
