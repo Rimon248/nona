@@ -88,9 +88,12 @@ final class MacOSVpnControl: NSObject {
           }
           DispatchQueue.main.async { result(value) }
         } catch {
-          let message = (error as? MacOSVpnException)?.userMessage ?? "Не удалось управлять VPN на Mac"
+          let vpnError = error as? MacOSVpnException
+          let message = vpnError?.userMessage ?? "Не удалось управлять VPN на Mac"
           DispatchQueue.main.async {
-            result(FlutterError(code: "mac-vpn", message: message, details: nil))
+            result(FlutterError(
+              code: vpnError == .cancelled ? "mac-vpn-cancelled" : "mac-vpn-startup",
+              message: message, details: nil))
           }
         }
       }
@@ -112,6 +115,12 @@ final class MacOSVpnControl: NSObject {
     let configURL = supportDirectory.appendingPathComponent("xray-\(UUID().uuidString).json")
     try Data(config.utf8).write(to: configURL, options: .atomic)
     try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+    do {
+      _ = try runCommand(engineURL().path, ["run", "-test", "-config", configURL.path])
+    } catch {
+      try? fileManager.removeItem(at: configURL)
+      throw MacOSVpnException.invalidRequest
+    }
     var state = NonaTunnelState(pid: 0, interface: interface, dns: dns, configPath: configURL.path)
     try save(state)
 
@@ -126,7 +135,14 @@ final class MacOSVpnControl: NSObject {
       try save(state)
       return true
     } catch {
-      try? stopAndRestore(state)
+      // The launch script restores DNS itself on failure. Avoid a second
+      // administrator prompt unless a system setting actually stayed changed.
+      if state.pid > 0 || !dnsSettingsMatch(dns) {
+        try? stopAndRestore(state)
+      } else {
+        try? fileManager.removeItem(at: configURL)
+        try? fileManager.removeItem(at: stateURL)
+      }
       throw error
     }
   }
@@ -252,18 +268,42 @@ final class MacOSVpnControl: NSObject {
   }
 
   private func captureDNSSettings() throws -> [NonaDNSState] {
-    let listing = try runCommand("/usr/sbin/networksetup", ["-listallnetworkservices"])
-    let services = listing.components(separatedBy: .newlines).dropFirst().compactMap { line -> String? in
-      let service = line.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !service.isEmpty, !service.hasPrefix("*") else { return nil }
-      return service
+    let route = try runCommand("/sbin/route", ["-n", "get", "default"])
+    guard let interface = route.components(separatedBy: .newlines)
+      .first(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("interface:") })?
+      .split(separator: ":", maxSplits: 1).last?
+      .trimmingCharacters(in: .whitespacesAndNewlines), !interface.isEmpty else {
+      throw MacOSVpnException.noNetworkServices
     }
-    return try services.map { service in
-      let text = try runCommand("/usr/sbin/networksetup", ["-getdnsservers", service])
-      let servers = text.components(separatedBy: .newlines).map {
-        $0.trimmingCharacters(in: .whitespacesAndNewlines)
-      }.filter { isIPAddress($0) }
-      return NonaDNSState(service: service, servers: servers)
+    let listing = try runCommand("/usr/sbin/networksetup", ["-listnetworkserviceorder"])
+    let lines = listing.components(separatedBy: .newlines)
+    guard let index = lines.firstIndex(where: { $0.contains("Device: \(interface))") }), index > 0 else {
+      throw MacOSVpnException.noNetworkServices
+    }
+    let serviceLine = lines[index - 1]
+    guard let close = serviceLine.firstIndex(of: ")") else {
+      throw MacOSVpnException.noNetworkServices
+    }
+    let service = serviceLine[serviceLine.index(after: close)...]
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !service.isEmpty, !service.hasPrefix("*") else {
+      throw MacOSVpnException.noNetworkServices
+    }
+    return [try readDNSState(for: service)]
+  }
+
+  private func readDNSState(for service: String) throws -> NonaDNSState {
+    let text = try runCommand("/usr/sbin/networksetup", ["-getdnsservers", service])
+    let servers = text.components(separatedBy: .newlines).map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { isIPAddress($0) }
+    return NonaDNSState(service: service, servers: servers)
+  }
+
+  private func dnsSettingsMatch(_ original: [NonaDNSState]) -> Bool {
+    original.allSatisfy { record in
+      guard let current = try? readDNSState(for: record.service) else { return false }
+      return current.servers == record.servers
     }
   }
 
@@ -304,7 +344,12 @@ final class MacOSVpnControl: NSObject {
 
   private func runAsAdministrator(_ command: String) throws -> String {
     let script = "do shell script \(appleScriptQuote(command)) with administrator privileges"
-    return try runCommand("/usr/bin/osascript", ["-e", script])
+    do {
+      return try runCommand("/usr/bin/osascript", ["-e", script])
+    } catch let error as CommandFailure {
+      if error.output.contains("(-128)") { throw MacOSVpnException.cancelled }
+      throw MacOSVpnException.commandFailed
+    }
   }
 
   private func runCommand(_ executable: String, _ arguments: [String]) throws -> String {
@@ -317,8 +362,11 @@ final class MacOSVpnControl: NSObject {
     try process.run()
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
-    guard process.terminationStatus == 0 else { throw MacOSVpnException.commandFailed }
-    return String(data: data, encoding: .utf8) ?? ""
+    let text = String(data: data, encoding: .utf8) ?? ""
+    guard process.terminationStatus == 0 else {
+      throw CommandFailure(output: text)
+    }
+    return text
   }
 
   private func shellQuote(_ value: String) -> String {
@@ -331,12 +379,17 @@ final class MacOSVpnControl: NSObject {
   }
 }
 
-private enum MacOSVpnException: Error {
+private struct CommandFailure: Error {
+  let output: String
+}
+
+private enum MacOSVpnException: Error, Equatable {
   case invalidRequest
   case noNetworkServices
   case noTunnelInterface
   case startupFailed
   case commandFailed
+  case cancelled
 
   var userMessage: String {
     switch self {
@@ -345,6 +398,7 @@ private enum MacOSVpnException: Error {
     case .noTunnelInterface: return "Не удалось выбрать интерфейс VPN"
     case .startupFailed: return "Не удалось запустить системный туннель Xray"
     case .commandFailed: return "Системная команда VPN завершилась с ошибкой или была отменена"
+    case .cancelled: return "Подключение отменено в системном запросе"
     }
   }
 }

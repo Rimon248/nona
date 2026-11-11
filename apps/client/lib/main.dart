@@ -381,6 +381,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'Подключение отменено в системном запросе'
             : 'Ни один VPN-канал сейчас не отвечает';
       }
+    } on PlatformException catch (error) {
+      _message = error.code == 'mac-vpn-startup'
+          ? (error.message ?? 'Не удалось запустить VPN на Mac')
+          : 'Не удалось открыть конфигурацию или запустить VPN';
     } catch (_) {
       _message = 'Не удалось открыть конфигурацию или запустить VPN';
     } finally {
@@ -466,6 +470,11 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_vpnState == 'connected') return true;
         if (_vpnState == 'error') break;
       }
+    } on PlatformException catch (error) {
+      if (error.code == 'mac-vpn-cancelled') return null;
+      if (error.code == 'mac-vpn-startup') rethrow;
+      await _stopVpn();
+      return false;
     } catch (_) {
       // Try the next transport after the current service has been stopped.
     }
