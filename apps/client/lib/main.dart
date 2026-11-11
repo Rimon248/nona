@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:oidc/oidc.dart';
 import 'package:oidc_default_store/oidc_default_store.dart';
 
-import 'android_app_routing_screen.dart';
+import 'internet_routing_screen.dart';
 import 'android_vpn_control.dart';
 import 'auth_client.dart';
 import 'config_bundle.dart';
@@ -715,27 +715,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.apps_outlined),
-                    title: const Text('Приложения без VPN'),
+                    title: const Text('Интернет без VPN'),
                     subtitle: const Text(
-                      'Выбрать приложения для прямого соединения',
+                      'Сайты и приложения через обычную сеть',
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const AndroidAppRoutingScreen(),
+                        builder: (_) => const InternetRoutingScreen(),
                       ),
                     ),
                   ),
                 ),
-              const Card(
-                child: ListTile(
-                  leading: Icon(Icons.route_outlined),
-                  title: Text('Маршрутизация'),
-                  subtitle: Text(
-                    'Маршруты для сайтов появятся после синхронизации',
-                  ),
-                ),
-              ),
               const SizedBox(height: 20),
               Text(
                 'При подключении система запросит разрешение на VPN и покажет '

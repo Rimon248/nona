@@ -236,9 +236,10 @@ class NonaVpnService : VpnService() {
                     (outboundProtocol == "hysteria" && streamSettings.getString("security") == "tls" &&
                         streamSettings.getJSONObject("hysteriaSettings").getInt("version") == 2),
             )
+            InternetRouting.decorateProfile(this, config)
             // Validate before Android routes any packet to the app.
             stage = "xray-validation"
-            requireSuccess(invoke("testXray", profile))
+            requireSuccess(invoke("testXray", config.toString()))
             if (cancelled) throw IllegalStateException("VPN was stopped")
 
             stage = "underlying-network"
@@ -267,16 +268,20 @@ class NonaVpnService : VpnService() {
             }
             LibXray.registerDialerController(controller)
             LibXray.setDNS(controller, "${if (dns.contains(':')) "[$dns]" else dns}:53")
-            val tunConfig = JSONObject(profile)
-            val nativeInbounds = JSONArray().put(
-                JSONObject()
-                    .put("tag", "tun-in")
-                    .put("protocol", "tun")
-                    // A nonempty name keeps Xray's config builder from calling
-                    // net.Interfaces(), which Android denies to this app. The
-                    // actual interface is the fd supplied by VpnService.
-                    .put("settings", JSONObject().put("name", "tun0").put("mtu", 1280)),
-            )
+            val tunConfig = JSONObject(config.toString())
+            val nativeInbound = JSONObject()
+                .put("tag", "tun-in")
+                .put("protocol", "tun")
+                // A nonempty name keeps Xray's config builder from calling
+                // net.Interfaces(), which Android denies to this app. The
+                // actual interface is the fd supplied by VpnService.
+                .put("settings", JSONObject().put("name", "tun0").put("mtu", 1280))
+            if (tunConfig.has("routing")) {
+                nativeInbound.put("sniffing", JSONObject().put("enabled", true)
+                    .put("destOverride", JSONArray(listOf("http", "tls", "quic")))
+                    .put("routeOnly", true))
+            }
+            val nativeInbounds = JSONArray().put(nativeInbound)
             tunConfig.put("inbounds", nativeInbounds)
             tunConfig.put("env", JSONObject().put("xray.tun.fd", tunnel!!.fd.toString()))
             stage = "xray-start"

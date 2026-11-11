@@ -13,7 +13,7 @@ internal object AndroidAppExclusions {
     private const val directPackagesKey = "direct_packages"
     private val packagePattern = Regex("^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$")
 
-    fun read(context: Context): List<String> =
+    fun readLegacy(context: Context): List<String> =
         context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
             .getStringSet(directPackagesKey, emptySet())
             .orEmpty()
@@ -39,7 +39,7 @@ internal object AndroidAppExclusions {
 
     /** Called by the VPN service before establish(), even if the UI is closed. */
     fun applySaved(builder: VpnService.Builder, context: Context) {
-        apply(builder, context.packageName, read(context))
+        apply(builder, context.packageName, InternetRouting.directPackages(context))
     }
 
     fun apply(

@@ -1,9 +1,7 @@
 package com.example.nona_client
 
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.VpnService
-import android.os.Build
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -20,10 +18,32 @@ class MainActivity : FlutterFragmentActivity() {
                     "getState" -> result.success(
                         mapOf(
                             "ownPackage" to packageName,
-                            "directPackages" to AndroidAppExclusions.read(this),
-                            "apps" to launchableApps(),
+                            "directPackages" to InternetRouting.directPackages(this),
+                            "apps" to InternetRouting.visibleApps(this),
+                            "policy" to InternetRouting.read(this).asMap(),
+                            "siteCatalogue" to InternetRouting.siteCatalogue(),
+                            "appCatalogue" to InternetRouting.appCatalogue(),
                         ),
                     )
+                    "saveInternetPolicy" -> {
+                        val raw = call.arguments as? Map<*, *>
+                        if (raw == null) result.error("BAD_POLICY", "Routing policy is invalid", null)
+                        else try {
+                            if (InternetRouting.save(this, raw)) result.success(null)
+                            else result.error("SAVE_FAILED", "Could not save routing policy", null)
+                        } catch (_: Exception) {
+                            result.error("BAD_POLICY", "Routing policy is invalid", null)
+                        }
+                    }
+                    "normalizeSite" -> {
+                        val input = call.arguments as? String
+                        if (input == null) result.error("BAD_SITE", "Invalid site", null)
+                        else try {
+                            result.success(InternetRouting.normalizeSiteInput(input))
+                        } catch (_: Exception) {
+                            result.error("BAD_SITE", "Use a domain or HTTPS address", null)
+                        }
+                    }
                     "saveDirectPackages" -> {
                         val raw = (call.arguments as? Map<*, *>)?.get("packages") as? List<*>
                         if (raw == null || raw.any { it !is String }) {
@@ -106,19 +126,4 @@ class MainActivity : FlutterFragmentActivity() {
         super.onDestroy()
     }
 
-    private fun launchableApps(): List<Map<String, String>> {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val matches = if (Build.VERSION.SDK_INT >= 33) {
-            packageManager.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0L))
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.queryIntentActivities(intent, 0)
-        }
-        return matches.mapNotNull { entry ->
-            val id = entry.activityInfo?.packageName ?: return@mapNotNull null
-            if (id == packageName) return@mapNotNull null
-            mapOf("packageName" to id, "label" to entry.loadLabel(packageManager).toString())
-        }.distinctBy { it["packageName"] }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it["label"] ?: "" })
-    }
 }
