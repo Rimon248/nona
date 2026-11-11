@@ -20,7 +20,7 @@ internal object InternetRouting {
     data class Site(val domain: String, val label: String, val essential: Boolean = false, val zone: Boolean = false)
     data class App(val id: String, val essential: Boolean = false)
 
-    val sites = listOf(
+    val sites = (listOf(
         Site("ru", ".ru — сайты в российской зоне", zone = true),
         Site("xn--p1ai", ".рф — сайты в российской зоне", zone = true),
         Site("su", ".su — сайты в зоне .su", zone = true),
@@ -29,6 +29,7 @@ internal object InternetRouting {
         Site("xn--80adxhks", ".москва — сайты в зоне Москвы", zone = true),
         Site("gosuslugi.ru", "Госуслуги", essential = true),
         Site("nalog.gov.ru", "ФНС", essential = true),
+        Site("government.ru", "Правительство России", essential = true),
         Site("sberbank.ru", "Сбер", essential = true),
         Site("vtb.ru", "ВТБ", essential = true),
         Site("tbank.ru", "Т-Банк", essential = true),
@@ -38,12 +39,16 @@ internal object InternetRouting {
         Site("yandex.ru", "Яндекс"),
         Site("yandex.com", "Яндекс — международный домен"),
         Site("vk.com", "ВКонтакте"),
+        Site("vk.ru", "ВКонтакте — основной адрес", essential = true),
+        Site("max.ru", "MAX", essential = true),
         Site("mail.ru", "Почта Mail"),
         Site("ozon.ru", "Ozon"),
         Site("wildberries.ru", "Wildberries"),
         Site("avito.ru", "Авито"),
         Site("2gis.ru", "2ГИС"),
-    )
+    ) + BankSites.domains.map { (domain, bank) ->
+        Site(domain, "Банк: $bank", essential = true)
+    }).distinctBy { it.domain }
     val apps = listOf(
         App("ru.rostel", essential = true),
         App("ru.oneme.app", essential = true),
@@ -51,15 +56,29 @@ internal object InternetRouting {
         App("ru.vtb24.mobilebanking.android", essential = true),
         App("ru.alfabank.mobile.android", essential = true),
         App("com.idamob.tinkoff.android", essential = true),
+        App("ru.gosuslugi.goskey", essential = true),
+        App("com.gnivts.selfemployed", essential = true),
+        App("ru.sigma.gisgkh", essential = true),
+        App("ru.gosuslugi.auto", essential = true),
+        App("ru.gosuslugi.pos", essential = true),
+        App("ru.rtlabs.mobile.ebs.gosuslugi.android", essential = true),
+        App("ru.rosreestr.mobile", essential = true),
+        App("ru.sitesoft.fssp", essential = true),
+        App("io.citizens.security", essential = true),
+        App("ru.gazprombank.android.mobilebank.app", essential = true),
+        App("ru.sovcomcard.halva.v1", essential = true),
+        App("ru.ozon.fintech.finance", essential = true),
+        App("ru.wildberries.bank", essential = true),
+        App("logo.com.mbanking", essential = true),
         App("ru.yandex.taxi"),
         App("ru.mail.mailapp"),
-        App("com.vkontakte.android"),
+        App("com.vkontakte.android", essential = true),
         App("com.vk.im"),
     )
 
     data class Policy(
-        val sitesMode: String = "off",
-        val appsMode: String = "off",
+        val sitesMode: String = "all",
+        val appsMode: String = "all",
         val siteOverrides: Map<String, Boolean> = emptyMap(),
         val appOverrides: Map<String, Boolean> = emptyMap(),
         val customSites: List<String> = emptyList(),
