@@ -137,3 +137,22 @@ func (k *keycloakAdmin) SetOperator(ctx context.Context, subject string, enabled
 	}
 	return nil
 }
+
+func (k *keycloakAdmin) DeleteUser(ctx context.Context, subject string) error {
+	if subject == "" || len(subject) > 256 || strings.ContainsAny(subject, "/?#%") {
+		return errors.New("invalid Keycloak user")
+	}
+	token, err := k.token(ctx)
+	if err != nil {
+		return err
+	}
+	response, err := k.call(ctx, token, http.MethodDelete, "/users/"+subject, nil)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusNotFound {
+		return errors.New("Keycloak user deletion failed")
+	}
+	return nil
+}

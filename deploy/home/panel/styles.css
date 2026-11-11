@@ -56,6 +56,8 @@ h2{font-size:16px;margin:0 0 14px;font-weight:600}
 .access-status.approved{color:var(--positive)}
 .user-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .user-actions button{font-size:12px;padding:7px 10px}
+.user-actions button.danger{color:var(--negative);border-color:#d8b8b9}
+.user-actions button.danger:hover{background:#fbeff0}
 .next-section p{font-size:14px;line-height:1.55;margin:0 0 12px;max-width:62ch}
 .next-section a{font-size:14px;color:var(--accent);text-decoration:none;font-weight:600}
 .next-section a:hover{text-decoration:underline}

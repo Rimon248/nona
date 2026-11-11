@@ -161,13 +161,11 @@ class AuthClient {
   }
 
   Future<void> _loadOidcAccount() async {
-    final token = await _oidc!.accessToken();
-    if (token == null) throw const AuthException('Sign in required');
-    final (status, body) = await _request(
-      'GET',
-      '/v1/account',
-      accessToken: token,
-    );
+    final (status, body) = await _authorizedRequest('GET', '/v1/account');
+    if (status == 401) {
+      _vpnAccessStatus = 'deleting';
+      throw const AuthException('Account unavailable');
+    }
     if (status != 200) {
       throw const AuthException('Could not load Keycloak account');
     }
@@ -182,6 +180,7 @@ class AuthClient {
             'approved',
             'revoking',
             'denied',
+            'deleting',
           ].contains(account['vpn_access'])) {
         throw const AuthException('Invalid Keycloak account');
       }
@@ -328,6 +327,10 @@ class AuthClient {
       maxResponseBytes: 1500000,
     );
     if (status == 404) return null;
+    if (status == 401) {
+      _vpnAccessStatus = 'deleting';
+      throw const AuthException('Account unavailable');
+    }
     if (status != 200) {
       throw const AuthException('Could not load configuration');
     }

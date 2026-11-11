@@ -13,6 +13,7 @@ import 'auth_client.dart';
 import 'config_bundle.dart';
 import 'configuration_sync.dart';
 import 'configuration_vault.dart';
+import 'vpn_action_policy.dart';
 
 void main() => runApp(const NonaApp());
 
@@ -59,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _deviceId;
   String? _message;
   String _configurationMessage = 'На этом устройстве пока не сохранены';
+  bool _hasUsableConfiguration = false;
   bool _busy = false;
   String _vpnState = 'idle';
   String? _vpnTransport;
@@ -171,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _syncConfiguration(auth);
     } catch (_) {
       _deviceId = null;
+      _hasUsableConfiguration = false;
       _message = 'Устройство не зарегистрировано. Повторите попытку.';
     }
   }
@@ -180,6 +183,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final deviceId = _deviceId;
     final accountId = auth.accountId;
     if (vault == null || deviceId == null || accountId == null) {
+      _hasUsableConfiguration = false;
       _configurationMessage = 'Проверка обновлений ещё не настроена';
       return;
     }
@@ -190,6 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final access = auth.vpnAccessStatus;
     if (access != null && access != 'approved') {
+      _hasUsableConfiguration = false;
       await vault.clear();
       if (_vpnState != 'idle' &&
           defaultTargetPlatform == TargetPlatform.android) {
@@ -200,6 +205,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _configurationMessage = switch (access) {
         'pending' => 'Аккаунт создан. Ожидаем решения администратора',
         'revoking' => 'Доступ к VPN отзывается',
+        'deleting' => 'Аккаунт удаляется',
         _ => 'Доступ к VPN не выдан',
       };
       return;
@@ -209,23 +215,33 @@ class _HomeScreenState extends State<HomeScreen> {
         auth,
         vault,
       ).refresh(deviceId: deviceId, now: DateTime.now());
+      _hasUsableConfiguration = bundle != null;
       _configurationMessage = bundle == null
           ? 'Сервер ещё не выдал конфигурацию этому устройству'
           : 'Проверенное обновление ${bundle.version} сохранено';
     } on BundleException {
+      _hasUsableConfiguration = false;
       _configurationMessage =
           'Не удалось проверить подпись или срок обновления';
     } catch (_) {
+      if (auth.vpnAccessStatus == 'deleting') {
+        _hasUsableConfiguration = false;
+        await vault.clear();
+        _configurationMessage = 'Аккаунт удалён';
+        return;
+      }
       try {
         final cached = await vault.load(
           accountId: accountId,
           deviceId: deviceId,
           now: DateTime.now(),
         );
+        _hasUsableConfiguration = cached != null;
         _configurationMessage = cached == null
             ? 'Не удалось получить обновление'
             : 'Сохранено проверенное обновление ${cached.version}; сервер недоступен';
       } catch (_) {
+        _hasUsableConfiguration = false;
         _configurationMessage = 'Не удалось получить обновление';
       }
     }
@@ -238,6 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await _syncConfiguration(auth);
     } catch (_) {
+      _hasUsableConfiguration = false;
       _configurationMessage = 'Не удалось обновить состояние доступа';
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -474,6 +491,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await auth.logout();
       await _vault?.clear();
       _deviceId = null;
+      _hasUsableConfiguration = false;
       _configurationMessage = 'На этом устройстве пока не сохранены';
     } catch (_) {
       if (mounted) {
@@ -506,6 +524,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   'approved' => 'Доступ к VPN разрешён',
                   'pending' => 'Заявка на VPN ожидает решения администратора',
                   'revoking' => 'Доступ к VPN отзывается',
+                  'deleting' => 'Аккаунт удаляется',
                   _ => 'Доступ к VPN не выдан',
                 }),
               ],
@@ -609,22 +628,24 @@ class _HomeScreenState extends State<HomeScreen> {
                           _deviceId != null &&
                           _vault != null) ...[
                         FilledButton(
-                          onPressed:
-                              _busy ||
-                                  (_vpnState == 'idle' &&
-                                      _auth?.vpnAccessStatus != null &&
-                                      _auth?.vpnAccessStatus != 'approved')
+                          onPressed: _busy
                               ? null
-                              : (_vpnState != 'idle'
-                                    ? _disconnectVpn
-                                    : _connectVpn),
+                              : _vpnState != 'idle'
+                              ? _disconnectVpn
+                              : canStartVpn(
+                                  busy: _busy,
+                                  vpnState: _vpnState,
+                                  accessStatus: _auth?.vpnAccessStatus,
+                                  hasConfiguration: _hasUsableConfiguration,
+                                )
+                              ? _connectVpn
+                              : null,
                           child: Text(
-                            _vpnState != 'idle'
-                                ? 'Отключить'
-                                : (_auth?.vpnAccessStatus != null &&
-                                          _auth?.vpnAccessStatus != 'approved'
-                                      ? 'Ожидаем доступ'
-                                      : 'Подключить'),
+                            vpnActionLabel(
+                              vpnState: _vpnState,
+                              accessStatus: _auth?.vpnAccessStatus,
+                              hasConfiguration: _hasUsableConfiguration,
+                            ),
                           ),
                         ),
                         if (_vpnState == 'connected') ...[

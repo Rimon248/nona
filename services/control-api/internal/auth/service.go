@@ -68,7 +68,22 @@ func (s *Service) AuthenticateOIDC(ctx context.Context, subject, username string
 	if err != nil {
 		return Session{}, err
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO accounts (id, username, password_hash, oidc_subject, display_username)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, subject); err != nil {
+		return Session{}, err
+	}
+	var deleted bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM deleted_oidc_subjects WHERE oidc_subject=$1)`, subject).Scan(&deleted); err != nil {
+		return Session{}, err
+	}
+	if deleted {
+		return Session{}, ErrInvalidCredentials
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO accounts (id, username, password_hash, oidc_subject, display_username)
 		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (oidc_subject) WHERE oidc_subject IS NOT NULL
 		DO UPDATE SET display_username=EXCLUDED.display_username`,
 		id, "oidc:"+subject, "oidc-managed", subject, username)
@@ -76,11 +91,14 @@ func (s *Service) AuthenticateOIDC(ctx context.Context, subject, username string
 		return Session{}, err
 	}
 	var accountID string
-	err = s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE oidc_subject=$1 AND disabled_at IS NULL`, subject).Scan(&accountID)
+	err = tx.QueryRow(ctx, `SELECT id FROM accounts WHERE oidc_subject=$1 AND disabled_at IS NULL`, subject).Scan(&accountID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrInvalidCredentials
 	}
 	if err != nil {
+		return Session{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Session{}, err
 	}
 	return Session{ID: "oidc:" + subject, AccountID: accountID}, nil
@@ -102,6 +120,13 @@ func (s *Service) CheckOIDCSchema(ctx context.Context) error {
 	}
 	if retryTable == nil {
 		return errors.New("provisioning retry migration is missing")
+	}
+	var deletedSubjectsTable *string
+	if err := s.pool.QueryRow(ctx, `SELECT to_regclass('public.deleted_oidc_subjects')::text`).Scan(&deletedSubjectsTable); err != nil {
+		return err
+	}
+	if deletedSubjectsTable == nil {
+		return errors.New("account deletion migration is missing")
 	}
 	return nil
 }

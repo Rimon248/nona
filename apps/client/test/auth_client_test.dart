@@ -55,6 +55,32 @@ String tokenResponse(String access, String refresh) => jsonEncode({
 });
 
 void main() {
+  test('a deleted Keycloak account cannot keep its prior approval', () async {
+    final oidc = FakeOidcSession();
+    var deleted = false;
+    final auth = AuthClient(
+      baseUri: Uri.parse('https://nona.example.invalid'),
+      secureStore: MemorySecureStore(),
+      oidcSession: oidc,
+      httpClient: MockClient((request) async {
+        if (deleted) return http.Response('', 401);
+        return http.Response(
+          '{"account_id":"account-k","username":"user","vpn_access":"approved"}',
+          200,
+        );
+      }),
+    );
+    await auth.loginWithKeycloak();
+    expect(auth.vpnAccessStatus, 'approved');
+    deleted = true;
+    await expectLater(
+      auth.refreshAccountStatus(),
+      throwsA(isA<AuthException>()),
+    );
+    expect(oidc.refreshes, 1);
+    expect(auth.vpnAccessStatus, 'deleting');
+  });
+
   test(
     'Keycloak login uses its bearer token and local account mapping',
     () async {

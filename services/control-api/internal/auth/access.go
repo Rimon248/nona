@@ -80,6 +80,7 @@ func (s *Service) SetAccessStatus(ctx context.Context, accountID, status string)
 	}
 	command, err := s.pool.Exec(ctx, `UPDATE accounts SET vpn_access_status=$2
 		WHERE id=$1 AND oidc_subject IS NOT NULL AND disabled_at IS NULL
+		AND vpn_access_status <> 'deleting'
 		AND ($2 <> 'approved' OR vpn_access_status <> 'revoking')`, accountID, status)
 	if err != nil {
 		return err
@@ -91,4 +92,68 @@ func (s *Service) SetAccessStatus(ctx context.Context, accountID, status string)
 		return ErrAccountNotFound
 	}
 	return nil
+}
+
+func (s *Service) OperatorAccountAllowed(ctx context.Context, subject string) (bool, error) {
+	var status string
+	err := s.pool.QueryRow(ctx, `SELECT vpn_access_status FROM accounts
+		WHERE oidc_subject=$1 AND disabled_at IS NULL`, subject).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return status != "deleting", err
+}
+
+func (s *Service) MarkAccountDeleting(ctx context.Context, accountID string) error {
+	command, err := s.pool.Exec(ctx, `UPDATE accounts SET vpn_access_status='deleting'
+		WHERE id=$1 AND oidc_subject IS NOT NULL AND disabled_at IS NULL
+		AND vpn_access_status <> 'deleting'`, accountID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() == 1 {
+		return nil
+	}
+	if _, err := s.AccessStatus(ctx, accountID); err == nil {
+		return ErrAccessTransition
+	}
+	return ErrAccountNotFound
+}
+
+// DeleteOIDCAccount runs only after the remote VPN credentials and Keycloak
+// user are removed. The tombstone and database deletion commit together.
+func (s *Service) DeleteOIDCAccount(ctx context.Context, accountID, subject string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, subject); err != nil {
+		return err
+	}
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT vpn_access_status FROM accounts
+		WHERE id=$1 AND oidc_subject=$2 AND disabled_at IS NULL FOR UPDATE`, accountID, subject).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrAccountNotFound
+		}
+		return err
+	}
+	if status != "deleting" {
+		return ErrAccessTransition
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO deleted_oidc_subjects (oidc_subject)
+		VALUES ($1) ON CONFLICT (oidc_subject) DO NOTHING`, subject); err != nil {
+		return err
+	}
+	command, err := tx.Exec(ctx, `DELETE FROM accounts a WHERE a.id=$1 AND a.oidc_subject=$2
+		AND NOT EXISTS (SELECT 1 FROM device_remote_credentials r JOIN devices d ON d.id=r.device_id WHERE d.account_id=a.id)
+		AND NOT EXISTS (SELECT 1 FROM device_configurations c JOIN devices d ON d.id=c.device_id WHERE d.account_id=a.id)`, accountID, subject)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return ErrAccessTransition
+	}
+	return tx.Commit(ctx)
 }

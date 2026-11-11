@@ -44,6 +44,15 @@ func adminHandler(service *auth.Service, verifier *oidc.Verifier, keycloak *keyc
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return oidc.Identity{}, nil, false
 		}
+		allowed, err := service.OperatorAccountAllowed(r.Context(), identity.Subject)
+		if err != nil {
+			http.Error(w, "administrator check unavailable", http.StatusServiceUnavailable)
+			return oidc.Identity{}, nil, false
+		}
+		if !allowed {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return oidc.Identity{}, nil, false
+		}
 		return identity, operators, true
 	}
 	mux.HandleFunc("GET /admin/api/users", func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +70,8 @@ func adminHandler(service *auth.Service, verifier *oidc.Verifier, keycloak *keyc
 			users[i].Owner = users[i].Subject == ownerSub
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"users": users, "can_manage_operators": identity.Subject == ownerSub})
+		_ = json.NewEncoder(w).Encode(map[string]any{"users": users,
+			"can_manage_operators": identity.Subject == ownerSub, "can_delete_users": identity.Subject == ownerSub})
 	})
 	mux.HandleFunc("POST /admin/api/users/{id}/access", func(w http.ResponseWriter, r *http.Request) {
 		if _, _, ok := authorized(w, r); !ok {
@@ -156,6 +166,44 @@ func adminHandler(service *auth.Service, verifier *oidc.Verifier, keycloak *keyc
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]bool{"operator": *input.Enabled})
 	})
+	mux.HandleFunc("DELETE /admin/api/users/{id}", func(w http.ResponseWriter, r *http.Request) {
+		identity, _, ok := authorized(w, r)
+		if !ok {
+			return
+		}
+		if identity.Subject != ownerSub || ownerSub == "" || r.Header.Get("Origin") != adminOrigin {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		accountID := r.PathValue("id")
+		subject, err := service.OIDCSubject(r.Context(), accountID)
+		if errors.Is(err, auth.ErrAccountNotFound) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			http.Error(w, "could not load user", http.StatusInternalServerError)
+			return
+		}
+		if subject == ownerSub || subject == identity.Subject {
+			http.Error(w, "owner account is protected", http.StatusForbidden)
+			return
+		}
+		if err := service.MarkAccountDeleting(r.Context(), accountID); err != nil {
+			switch {
+			case errors.Is(err, auth.ErrAccountNotFound):
+				http.Error(w, "user not found", http.StatusNotFound)
+			case errors.Is(err, auth.ErrAccessTransition):
+				http.Error(w, "deletion in progress", http.StatusConflict)
+			default:
+				http.Error(w, "could not schedule deletion", http.StatusInternalServerError)
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "deleting"})
+	})
 	return mux
 }
 
@@ -231,31 +279,38 @@ func recordProvisionFailure(ctx context.Context, pool *pgxpool.Pool, deviceID st
 	return tx.Commit(ctx)
 }
 
-func reconcileAccess(pool *pgxpool.Pool, service *auth.Service) error {
+func reconcileAccess(pool *pgxpool.Pool, service *auth.Service, keycloak *keycloakAdmin, ownerSub string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	// Finish withdrawals before issuing new access. The state remains revoking
-	// until every VDSina credential has been removed.
-	rows, err := pool.Query(ctx, `SELECT id FROM accounts WHERE vpn_access_status='revoking' ORDER BY created_at LIMIT 10`)
+	// Finish withdrawals and deletions before issuing new access. Both states
+	// remain blocked until every VDSina credential has been removed.
+	rows, err := pool.Query(ctx, `SELECT id, oidc_subject, vpn_access_status FROM accounts
+		WHERE vpn_access_status IN ('revoking','deleting') AND oidc_subject IS NOT NULL
+		ORDER BY created_at LIMIT 10`)
 	if err != nil {
 		return err
 	}
-	var revoking []string
+	type withdrawal struct{ account, subject, status string }
+	var withdrawals []withdrawal
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var item withdrawal
+		if err := rows.Scan(&item.account, &item.subject, &item.status); err != nil {
 			rows.Close()
 			return err
 		}
-		revoking = append(revoking, id)
+		withdrawals = append(withdrawals, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return err
 	}
 	rows.Close()
-	for _, accountID := range revoking {
-		deviceRows, err := pool.Query(ctx, `SELECT id FROM devices WHERE account_id=$1 ORDER BY id`, accountID)
+	for _, item := range withdrawals {
+		if item.status == "deleting" && item.subject == ownerSub {
+			log.Print("refusing to delete the original administrator")
+			continue
+		}
+		deviceRows, err := pool.Query(ctx, `SELECT id FROM devices WHERE account_id=$1 ORDER BY id`, item.account)
 		if err != nil {
 			return err
 		}
@@ -275,13 +330,22 @@ func reconcileAccess(pool *pgxpool.Pool, service *auth.Service) error {
 		deviceRows.Close()
 		failed := false
 		for _, deviceID := range devices {
-			if err := removeDeviceAccess(pool, accountID, deviceID); err != nil {
+			if err := removeDeviceAccess(pool, item.account, deviceID); err != nil {
 				log.Printf("could not revoke VPN credentials for device %s", deviceID)
 				failed = true
 			}
 		}
 		if !failed {
-			if err := service.SetAccessStatus(ctx, accountID, "denied"); err != nil {
+			if item.status == "deleting" {
+				if err := keycloak.DeleteUser(ctx, item.subject); err != nil {
+					log.Printf("could not delete Keycloak user for account %s", item.account)
+					continue
+				}
+				if err := service.DeleteOIDCAccount(ctx, item.account, item.subject); err != nil {
+					log.Printf("could not finish account deletion for %s", item.account)
+					continue
+				}
+			} else if err := service.SetAccessStatus(ctx, item.account, "denied"); err != nil {
 				return err
 			}
 		}
@@ -349,7 +413,7 @@ func serveAdmin() {
 	cancel()
 	go func() {
 		for {
-			if err := reconcileAccess(pool, service); err != nil {
+			if err := reconcileAccess(pool, service, keycloak, ownerSub); err != nil {
 				log.Printf("VPN access reconciliation failed: %v", err)
 			}
 			time.Sleep(15 * time.Second)

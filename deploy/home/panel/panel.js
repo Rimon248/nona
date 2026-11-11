@@ -41,9 +41,10 @@ refresh();
 
 const accessLabels = {
   pending: 'Ожидает решения', approved: 'Доступ разрешён',
-  revoking: 'Отзываем доступ', denied: 'Без доступа'
+  revoking: 'Отзываем доступ', denied: 'Без доступа',
+  deleting: 'Удаляем аккаунт'
 };
-function userRow(user, canManageOperators) {
+function userRow(user, canManageOperators, canDeleteUsers) {
   const row = document.createElement('div');
   row.className = 'user-row';
   const identity = document.createElement('div');
@@ -78,12 +79,20 @@ function userRow(user, canManageOperators) {
     deny.addEventListener('click', () => changeAccess(user, 'deny'));
     actions.append(deny);
   }
-  if (canManageOperators && !user.owner) {
+  if (canManageOperators && !user.owner && user.status !== 'deleting') {
     const operator = document.createElement('button');
     operator.type = 'button';
     operator.textContent = user.operator ? 'Убрать администратора' : 'Назначить администратором';
     operator.addEventListener('click', () => changeOperator(user, !user.operator));
     actions.append(operator);
+  }
+  if (canDeleteUsers && !user.owner && user.status !== 'deleting') {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger';
+    remove.textContent = 'Удалить аккаунт';
+    remove.addEventListener('click', () => deleteUser(user));
+    actions.append(remove);
   }
   row.append(identity, status, actions);
   return row;
@@ -92,7 +101,7 @@ async function loadUsers() {
   usersButton.disabled = true;
   try {
     const data = await readJson('/admin/api/users');
-    usersList.replaceChildren(...data.users.map(user => userRow(user, data.can_manage_operators)));
+    usersList.replaceChildren(...data.users.map(user => userRow(user, data.can_manage_operators, data.can_delete_users)));
     usersMessage.textContent = data.users.length === 0
       ? 'Зарегистрированных пользователей пока нет.'
       : `${data.users.length} пользователей`;
@@ -129,6 +138,20 @@ async function changeAccess(user, decision) {
     await loadUsers();
   } catch (_) {
     usersMessage.textContent = 'Не удалось сохранить решение. Повторите попытку.';
+  }
+}
+async function deleteUser(user) {
+  const typed = prompt(`Удалить аккаунт «${user.username}» вместе с доступом к панели и VPN? Это действие нельзя отменить. Для подтверждения введите имя пользователя:`);
+  if (typed !== user.username) return;
+  usersMessage.textContent = 'Удаляем аккаунт и данные доступа…';
+  try {
+    const response = await fetch(`/admin/api/users/${encodeURIComponent(user.id)}`, {
+      method: 'DELETE', credentials: 'same-origin', cache: 'no-store'
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    await loadUsers();
+  } catch (_) {
+    usersMessage.textContent = 'Не удалось удалить аккаунт. Повторите попытку.';
   }
 }
 usersButton.addEventListener('click', loadUsers);
