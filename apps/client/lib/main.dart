@@ -119,16 +119,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         settings: OidcUserManagerSettings(
           scope: const ['openid', 'profile', 'email'],
-          redirectUri:
-              defaultTargetPlatform == TargetPlatform.windows ||
-                  defaultTargetPlatform == TargetPlatform.macOS
+          redirectUri: defaultTargetPlatform == TargetPlatform.windows
               ? Uri.parse('http://127.0.0.1:0')
               : Uri.parse('ru.basketref.nona://oauth2redirect'),
-          options: const OidcPlatformSpecificOptions(
-            macos: OidcNativeOptionsApple(
-              navigationMode: OidcAppleNavigationMode.loopbackSystemBrowser,
-            ),
-          ),
         ),
       );
       _http = http.Client();
