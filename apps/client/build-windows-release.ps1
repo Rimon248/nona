@@ -27,10 +27,12 @@ try {
   if ($LASTEXITCODE -ne 0 -or -not $visualStudio) { throw 'Visual C++ build tools are missing.' }
   $redistRoot = Join-Path $visualStudio 'VC/Redist/MSVC'
   $crt = Get-ChildItem -Path $redistRoot -Directory |
-    Sort-Object { [version]$_.Name } -Descending |
-    ForEach-Object { Join-Path $_.FullName 'x64/Microsoft.VC143.CRT' } |
-    Where-Object { Test-Path (Join-Path $_ 'msvcp140.dll') } |
-    Select-Object -First 1
+    Sort-Object Name -Descending |
+    ForEach-Object {
+      Get-ChildItem -Path (Join-Path $_.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue
+    } |
+    Where-Object { Test-Path (Join-Path $_.FullName 'msvcp140.dll') } |
+    Select-Object -First 1 -ExpandProperty FullName
   if (-not $crt) { throw 'The matching x64 Visual C++ runtime was not found.' }
   $bundle = Join-Path $clientDirectory 'build/windows/x64/runner/Release'
   foreach ($name in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
