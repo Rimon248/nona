@@ -195,22 +195,43 @@ final class MacOSVpnControl: NSObject {
   private func launchXray(config: URL, interface: String, dns: [NonaDNSState]) throws -> Int32 {
     let executable = shellQuote(engineURL().path)
     let configPath = shellQuote(config.path)
-    var commands = ["set -e"]
+    let logURL = supportDirectory.appendingPathComponent("xray-start-\(UUID().uuidString).log")
+    try Data().write(to: logURL, options: .atomic)
+    try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: logURL.path)
+    defer { try? fileManager.removeItem(at: logURL) }
+    var commands = ["set -e", "stage=dns"]
     commands.append("rollback_dns() {\n\(dnsRestoreCommands(dns).joined(separator: "\n"))\n}")
-    commands.append("rollback() { if [ -n \"${pid:-}\" ]; then /bin/kill -TERM \"$pid\" 2>/dev/null || true; fi; rollback_dns; }")
+    commands.append("rollback() { printf 'NONA_STAGE:%s\\n' \"$stage\" >&2; if [ -n \"${pid:-}\" ]; then /bin/kill -TERM \"$pid\" 2>/dev/null || true; fi; rollback_dns; }")
     commands.append("trap rollback EXIT")
     for record in dns {
       commands.append(
         "/usr/sbin/networksetup -setdnsservers \(shellQuote(record.service)) \(dnsAddress) \(dnsAddressV6)"
       )
     }
-    commands.append("/usr/bin/nohup \(executable) run -config \(configPath) >/dev/null 2>&1 </dev/null &")
+    commands.append("stage=engine")
+    commands.append("/usr/bin/nohup \(executable) run -config \(configPath) >\(shellQuote(logURL.path)) 2>&1 </dev/null &")
     commands.append("pid=$!")
+    commands.append("stage=tun")
     commands.append("i=0; while [ $i -lt 32 ]; do if /sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1; then break; fi; if ! /bin/kill -0 $pid 2>/dev/null; then exit 1; fi; /bin/sleep 0.25; i=$((i+1)); done")
     commands.append("/sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1")
     commands.append("trap - EXIT")
     commands.append("printf '%s\\n' \"$pid\"")
-    let output = try runAsAdministrator(commands.joined(separator: "\n"))
+    let output: String
+    do {
+      output = try runAsAdministrator(commands.joined(separator: "\n"))
+    } catch {
+      let engineLog = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+      if engineLog.contains("failed to add system route") {
+        throw MacOSVpnException.routeFailed
+      }
+      if engineLog.contains("permission denied") || engineLog.contains("operation not permitted") {
+        throw MacOSVpnException.tunPermissionFailed
+      }
+      if engineLog.contains("failed to parse") || engineLog.contains("failed to build") {
+        throw MacOSVpnException.invalidRequest
+      }
+      throw error
+    }
     guard let pid = Int32(output.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
       throw MacOSVpnException.startupFailed
     }
@@ -348,6 +369,10 @@ final class MacOSVpnControl: NSObject {
       return try runCommand("/usr/bin/osascript", ["-e", script])
     } catch let error as CommandFailure {
       if error.output.contains("(-128)") { throw MacOSVpnException.cancelled }
+      if error.output.contains("NONA_STAGE:dns") { throw MacOSVpnException.dnsFailed }
+      if error.output.contains("NONA_STAGE:engine") || error.output.contains("NONA_STAGE:tun") {
+        throw MacOSVpnException.startupFailed
+      }
       throw MacOSVpnException.commandFailed
     }
   }
@@ -388,6 +413,9 @@ private enum MacOSVpnException: Error, Equatable {
   case noNetworkServices
   case noTunnelInterface
   case startupFailed
+  case dnsFailed
+  case routeFailed
+  case tunPermissionFailed
   case commandFailed
   case cancelled
 
@@ -397,6 +425,9 @@ private enum MacOSVpnException: Error, Equatable {
     case .noNetworkServices: return "Не найдены активные сетевые службы macOS"
     case .noTunnelInterface: return "Не удалось выбрать интерфейс VPN"
     case .startupFailed: return "Не удалось запустить системный туннель Xray"
+    case .dnsFailed: return "Не удалось изменить DNS активной сети на Mac"
+    case .routeFailed: return "Xray не смог установить системный маршрут VPN"
+    case .tunPermissionFailed: return "macOS не разрешила Xray создать интерфейс VPN"
     case .commandFailed: return "Системная команда VPN завершилась с ошибкой или была отменена"
     case .cancelled: return "Подключение отменено в системном запросе"
     }
