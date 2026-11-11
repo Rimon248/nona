@@ -296,6 +296,9 @@ final class MacOSVpnControl: NSObject {
       .trimmingCharacters(in: .whitespacesAndNewlines), !interface.isEmpty else {
       throw MacOSVpnException.noNetworkServices
     }
+    if interface.hasPrefix("utun") {
+      throw MacOSVpnException.anotherVpnActive
+    }
     let listing = try runCommand("/usr/sbin/networksetup", ["-listnetworkserviceorder"])
     let lines = listing.components(separatedBy: .newlines)
     guard let index = lines.firstIndex(where: { $0.contains("Device: \(interface))") }), index > 0 else {
@@ -411,6 +414,7 @@ private struct CommandFailure: Error {
 private enum MacOSVpnException: Error, Equatable {
   case invalidRequest
   case noNetworkServices
+  case anotherVpnActive
   case noTunnelInterface
   case startupFailed
   case dnsFailed
@@ -423,6 +427,7 @@ private enum MacOSVpnException: Error, Equatable {
     switch self {
     case .invalidRequest: return "Не удалось подготовить профиль для macOS"
     case .noNetworkServices: return "Не найдены активные сетевые службы macOS"
+    case .anotherVpnActive: return "Отключите другой VPN на Mac перед подключением Ноны"
     case .noTunnelInterface: return "Не удалось выбрать интерфейс VPN"
     case .startupFailed: return "Не удалось запустить системный туннель Xray"
     case .dnsFailed: return "Не удалось изменить DNS активной сети на Mac"
