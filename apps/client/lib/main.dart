@@ -185,6 +185,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _busy = true);
     try {
       if (await auth.restore()) await _registerDevice(auth);
+    } on ProtectedStorageException {
+      if (mounted) setState(() => _message = _storageAccessMessage);
     } catch (_) {
       if (mounted) {
         setState(() => _message = 'Не удалось проверить сохранённую сессию');
@@ -202,11 +204,20 @@ class _HomeScreenState extends State<HomeScreen> {
     _ => 'Устройство',
   };
 
+  String get _storageAccessMessage =>
+      defaultTargetPlatform == TargetPlatform.macOS
+      ? 'Нона не может прочитать Связку ключей. Разрешите доступ в системном окне и повторите попытку.'
+      : 'Нона не может прочитать защищённое хранилище. Разблокируйте устройство и повторите попытку.';
+
   Future<void> _registerDevice(AuthClient auth) async {
     try {
       _deviceId = await auth.ensureDeviceRegistered(_deviceLabel);
       _message = null;
       await _syncConfiguration(auth);
+    } on ProtectedStorageException {
+      _deviceId = null;
+      _hasUsableConfiguration = false;
+      _message = _storageAccessMessage;
     } catch (_) {
       _deviceId = null;
       _hasUsableConfiguration = false;
@@ -259,6 +270,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _configurationMessage =
           'Не удалось проверить подпись или срок обновления';
     } catch (error) {
+      if (error is ProtectedStorageException) {
+        _hasUsableConfiguration = false;
+        _configurationMessage = _storageAccessMessage;
+        return;
+      }
       if (error is AuthException &&
           (auth.vpnAccessStatus == 'deleting' ||
               error.message == 'Sign in required' ||
@@ -280,6 +296,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _configurationMessage = cached == null
             ? 'Не удалось получить обновление'
             : 'Сохранено проверенное обновление ${cached.version}; сервер недоступен';
+      } on ProtectedStorageException {
+        _hasUsableConfiguration = false;
+        _configurationMessage = _storageAccessMessage;
       } catch (_) {
         _hasUsableConfiguration = false;
         _configurationMessage = 'Не удалось получить обновление';
@@ -293,6 +312,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _busy = true);
     try {
       await _syncConfiguration(auth);
+    } on ProtectedStorageException {
+      _hasUsableConfiguration = false;
+      _configurationMessage = _storageAccessMessage;
     } catch (_) {
       _hasUsableConfiguration = false;
       _configurationMessage = 'Не удалось обновить состояние доступа';
@@ -381,6 +403,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'Подключение отменено в системном запросе'
             : 'Ни один VPN-канал сейчас не отвечает';
       }
+    } on ProtectedStorageException {
+      _message = _storageAccessMessage;
     } on PlatformException catch (error) {
       _message = error.code == 'mac-vpn-startup'
           ? (error.message ?? 'Не удалось запустить VPN на Mac')
