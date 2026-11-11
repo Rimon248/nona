@@ -27,6 +27,10 @@ jobs:
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
 
+      - name: Apply upstream macOS AOT workaround
+        shell: bash
+        run: python3 apps/client/macos/patch-flutter-aot.py "$RUNNER_TEMP/flutter"
+
       - name: Build macOS TUN app
         shell: bash
         run: |

@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <shellapi.h>
+#include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
 #include "resource.h"
