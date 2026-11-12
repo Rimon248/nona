@@ -50,7 +50,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const _apiBaseUrl = String.fromEnvironment('NONA_API_BASE_URL');
   static const _oidcIssuer = String.fromEnvironment(
     'NONA_OIDC_ISSUER',
@@ -84,6 +84,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _updateTimer;
   Timer? _vpnHealthTimer;
   int _vpnHealthFailures = 0;
+  String _macHelperState = 'checking';
+  bool _installingMacHelper = false;
 
   static const MethodChannel _windowChannel = MethodChannel('nona.window');
 
@@ -95,6 +97,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      _refreshMacHelperState();
+    }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       _windowChannel.setMethodCallHandler(_handleWindowCall);
     }
@@ -169,6 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _updateTimer?.cancel();
     _vpnHealthTimer?.cancel();
     if (defaultTargetPlatform == TargetPlatform.windows) {
@@ -177,6 +184,96 @@ class _HomeScreenState extends State<HomeScreen> {
     _oidc?.dispose();
     _http?.close();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        defaultTargetPlatform == TargetPlatform.macOS) {
+      _refreshMacHelperState();
+    }
+  }
+
+  Future<void> _refreshMacHelperState() async {
+    try {
+      final value = await _macVpn.helperStatus();
+      if (mounted) setState(() => _macHelperState = value);
+    } catch (_) {
+      if (mounted) setState(() => _macHelperState = 'error');
+    }
+  }
+
+  Future<void> _installMacHelper() async {
+    if (_installingMacHelper) return;
+    setState(() => _installingMacHelper = true);
+    try {
+      final value = await _macVpn.installHelper();
+      if (mounted) setState(() => _macHelperState = value);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _message = error is PlatformException && error.message != null
+              ? error.message
+              : 'Не удалось подготовить системный помощник';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _installingMacHelper = false);
+    }
+  }
+
+  Widget _macHelperCard() {
+    final subtitle = switch (_macHelperState) {
+      'enabled' => 'Одобрен macOS. Подключение и отключение работают без повторных запросов администратора.',
+      'requiresApproval' => 'Разрешите «Нону» в настройках фоновых объектов macOS, затем вернитесь в приложение.',
+      'notRegistered' => 'Зарегистрируйте помощник один раз. macOS покажет его в настройках фоновых объектов.',
+      'signingRequired' => 'Эта тестовая сборка подписана ad-hoc. Для помощника нужна стабильная подпись; публичный выпуск потребует Developer ID.',
+      'unsupported' => 'Системный помощник требует macOS 13 или новее. На этой версии остаётся стандартное системное подтверждение.',
+      'notFound' => 'Помощник отсутствует в этой сборке. Обновите Нону.',
+      'error' => 'Не удалось прочитать состояние системного помощника.',
+      _ => 'Проверяем состояние системного помощника…',
+    };
+    final canRegister = _macHelperState == 'notRegistered';
+    final needsApproval = _macHelperState == 'requiresApproval';
+    final canRefresh =
+        _macHelperState == 'enabled' ||
+        _macHelperState == 'error' ||
+        _macHelperState == 'notFound';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Системный помощник macOS',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(subtitle),
+            if (canRegister || needsApproval || canRefresh) ...[
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: _installingMacHelper
+                    ? null
+                    : canRefresh
+                    ? _refreshMacHelperState
+                    : _installMacHelper,
+                child: Text(
+                  _installingMacHelper
+                      ? 'Открываем…'
+                      : needsApproval
+                      ? 'Открыть настройки macOS'
+                      : canRefresh
+                      ? 'Обновить состояние'
+                      : 'Подготовить помощник',
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _handleWindowCall(MethodCall call) async {
@@ -509,24 +606,6 @@ class _HomeScreenState extends State<HomeScreen> {
   /// that ordinary browser traffic can reach websites.
   Future<void> _probeWebTraffic() async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
-    if (defaultTargetPlatform == TargetPlatform.windows) {
-      // VDSina currently has no IPv6 egress. Browsers fall back from blocked
-      // IPv6 to IPv4, so make this probe use IPv4 as well.
-      client.findProxy = (_) => 'DIRECT';
-      client.connectionFactory = (uri, proxyHost, proxyPort) async {
-        if (proxyHost != null || proxyPort != null) {
-          throw SocketException('The VPN check must use a direct connection');
-        }
-        final addresses = await InternetAddress.lookup(
-          uri.host,
-          type: InternetAddressType.IPv4,
-        );
-        if (addresses.isEmpty) {
-          throw SocketException('No IPv4 address for the VPN check');
-        }
-        return Socket.startConnect(addresses.first, uri.port);
-      };
-    }
     try {
       final request = await client
           .getUrl(Uri.https('example.com', '/'))
@@ -567,7 +646,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await Future<void>.delayed(const Duration(milliseconds: 500));
         _vpnState = await _vpnStatus();
         if (_vpnState == 'connected') {
-          if (defaultTargetPlatform != TargetPlatform.macOS) {
+          if (defaultTargetPlatform == TargetPlatform.android) {
             try {
               await _probeWebTraffic();
               _websiteProbeMessage = null;
@@ -650,7 +729,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _latencyMessage = 'VPN отключился во время проверки';
         }
       });
-      if (state == 'connected') {
+      if (state == 'connected' &&
+          defaultTargetPlatform == TargetPlatform.android) {
         try {
           await _probeWebTraffic();
         } catch (_) {
@@ -690,16 +770,18 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await _measureVpn();
       _vpnHealthFailures = 0;
-      try {
-        await _probeWebTraffic();
-        if (_websiteProbeMessage != null && mounted) {
-          setState(() => _websiteProbeMessage = null);
-        }
-      } catch (_) {
-        if (mounted && _websiteProbeMessage == null) {
-          setState(
-            () => _websiteProbeMessage = 'Туннель подключён, но сайт проверки не открылся. Проверьте YouTube.',
-          );
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          await _probeWebTraffic();
+          if (_websiteProbeMessage != null && mounted) {
+            setState(() => _websiteProbeMessage = null);
+          }
+        } catch (_) {
+          if (mounted && _websiteProbeMessage == null) {
+            setState(
+              () => _websiteProbeMessage = 'Туннель подключён, но сайт проверки не открылся. Проверьте YouTube.',
+            );
+          }
         }
       }
     } catch (_) {
@@ -1076,6 +1158,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
+              if (defaultTargetPlatform == TargetPlatform.macOS) ...[
+                const SizedBox(height: 16),
+                _macHelperCard(),
+              ],
               const SizedBox(height: 20),
               Card(
                 child: ListTile(

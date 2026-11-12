@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ru.basketref.nona.helper</string>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>ru.basketref.nona</string>
+	</array>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/NonaPrivilegedHelper</string>
+	<key>MachServices</key>
+	<dict>
+		<key>ru.basketref.nona.helper</key>
+		<true/>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>
