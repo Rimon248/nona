@@ -85,7 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _vpnHealthTimer;
   int _vpnHealthFailures = 0;
 
-  static const MethodChannel _trayChannel = MethodChannel('nona.tray');
+  static const MethodChannel _windowChannel = MethodChannel('nona.window');
 
   bool get _vpnControlsAvailable =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -96,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      _trayChannel.setMethodCallHandler(_handleTrayCall);
+      _windowChannel.setMethodCallHandler(_handleWindowCall);
     }
     if (_vpnControlsAvailable) _refreshVpnState();
     if (_apiBaseUrl.isEmpty) return;
@@ -172,20 +172,28 @@ class _HomeScreenState extends State<HomeScreen> {
     _updateTimer?.cancel();
     _vpnHealthTimer?.cancel();
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      _trayChannel.setMethodCallHandler(null);
+      _windowChannel.setMethodCallHandler(null);
     }
     _oidc?.dispose();
     _http?.close();
     super.dispose();
   }
 
-  Future<void> _handleTrayCall(MethodCall call) async {
+  Future<void> _handleWindowCall(MethodCall call) async {
     if (call.method != 'requestExit') return;
+    while (_busy && mounted) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    try {
+      _vpnState = await _vpnStatus();
+    } catch (_) {
+      _vpnState = 'error';
+    }
     if (_vpnState != 'idle') await _disconnectVpn();
     if (_vpnState == 'idle') {
-      await _trayChannel.invokeMethod<void>('exitNow');
+      await _windowChannel.invokeMethod<void>('exitNow');
     } else {
-      await _trayChannel.invokeMethod<void>('cancelExit');
+      await _windowChannel.invokeMethod<void>('cancelExit');
     }
   }
 
@@ -501,6 +509,24 @@ class _HomeScreenState extends State<HomeScreen> {
   /// that ordinary browser traffic can reach websites.
   Future<void> _probeWebTraffic() async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      // VDSina currently has no IPv6 egress. Browsers fall back from blocked
+      // IPv6 to IPv4, so make this probe use IPv4 as well.
+      client.findProxy = (_) => 'DIRECT';
+      client.connectionFactory = (uri, proxyHost, proxyPort) async {
+        if (proxyHost != null || proxyPort != null) {
+          throw SocketException('The VPN check must use a direct connection');
+        }
+        final addresses = await InternetAddress.lookup(
+          uri.host,
+          type: InternetAddressType.IPv4,
+        );
+        if (addresses.isEmpty) {
+          throw SocketException('No IPv4 address for the VPN check');
+        }
+        return Socket.startConnect(addresses.first, uri.port);
+      };
+    }
     try {
       final request = await client
           .getUrl(Uri.https('example.com', '/'))
@@ -1025,7 +1051,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             label: Text(
                               _measuringLatency
                                   ? 'Проверяем задержку…'
-                                  : 'Проверить пинг',
+                                  : 'Проверить задержку',
                             ),
                           ),
                           if (_latencyMs != null) ...[

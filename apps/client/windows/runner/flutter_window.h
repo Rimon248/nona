@@ -24,18 +24,13 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
-  void AddTrayIcon();
-  void RemoveTrayIcon();
-  void ShowTrayMenu();
-
   // The project to run.
   flutter::DartProject project_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
-  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> tray_channel_;
-  HWND tray_window_ = nullptr;
-  bool tray_icon_added_ = false;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> window_channel_;
+  bool close_requested_ = false;
   bool exit_requested_ = false;
 };
 

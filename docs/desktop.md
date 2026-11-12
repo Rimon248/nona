@@ -16,7 +16,7 @@ Apple Developer Program для этой локальной TUN-сборки не
 
 ## Windows
 
-`apps/client/build-windows-release.ps1` загружает libXray, Xray-core и Wintun с проверкой SHA-256 и создаёт папку `apps/client/build/windows/x64/runner/Release`. Распространять и переносить нужно **всю папку**, а не один `.exe`. Windows запрашивает повышение прав при запуске Ноны, поскольку TUN меняет системные маршруты и правила Windows Filtering Platform. Закрытие окна оставляет Нону в области уведомлений; пункт «Отключить VPN и выйти» останавливает соединение.
+`apps/client/build-windows-release.ps1` загружает libXray, Xray-core и Wintun с проверкой SHA-256 и создаёт папку `apps/client/build/windows/x64/runner/Release`. Распространять и переносить нужно **всю папку**, а не один `.exe`. Windows запрашивает повышение прав при запуске Ноны, поскольку TUN меняет системные маршруты и правила Windows Filtering Platform. Пока меню трея не подготовлено, закрытие окна штатно отключает VPN и полностью завершает Нону.
 
 В архив вместе с программой копируются три библиотеки Visual C++ из среды сборки: `msvcp140.dll`, `vcruntime140.dll` и `vcruntime140_1.dll`. Это позволяет запустить пробную сборку на Windows без ранее установленного Visual C++ Redistributable. Для будущего установщика можно использовать системный пакет Microsoft, который обновляется отдельно от Ноны.
 
