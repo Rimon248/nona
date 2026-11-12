@@ -171,8 +171,8 @@ class WindowsProcessCatalog {
     if (!Platform.isWindows) return const [];
     const command =
         'Get-Process -ErrorAction SilentlyContinue | '
-        'Where-Object { $_.MainWindowHandle -ne 0 } | '
-        'ForEach-Object { $_.ProcessName } | Sort-Object -Unique';
+        r'Where-Object { $_.MainWindowHandle -ne 0 } | '
+        r'ForEach-Object { $_.ProcessName } | Sort-Object -Unique';
     final result = await Process.run('powershell.exe', [
       '-NoLogo',
       '-NoProfile',
