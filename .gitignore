@@ -5,6 +5,7 @@
 **/Pods/
 **/.symlinks/
 **/DerivedData/
+apps/client/ios/Frameworks/
 **/*.xcuserstate
 **/local.properties
 **/key.properties

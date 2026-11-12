@@ -9,6 +9,7 @@ if ! printf '%s' "$verify_key" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{43}$'; then
 fi
 
 cd "$client_dir"
+"$client_dir/ios/prepare-engine.sh"
 flutter pub get
 flutter build ios --release --no-codesign \
   --dart-define=NONA_API_BASE_URL=https://nona.server.basketref.ru \

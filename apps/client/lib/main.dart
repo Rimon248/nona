@@ -15,6 +15,7 @@ import 'desktop_routing.dart';
 import 'desktop_routing_screen.dart';
 import 'macos_vpn_control.dart';
 import 'android_vpn_control.dart';
+import 'ios_vpn_control.dart';
 import 'auth_client.dart';
 import 'config_bundle.dart';
 import 'configuration_sync.dart';
@@ -67,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   AuthClient? _auth;
   ConfigurationVault? _vault;
   final AndroidVpnControl _androidVpn = AndroidVpnControl();
+  final IosVpnControl _iosVpn = IosVpnControl();
   final WindowsVpnControl _windowsVpn = WindowsVpnControl.instance;
   final MacOSVpnControl _macVpn = MacOSVpnControl.instance;
   String? _deviceId;
@@ -93,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   bool get _vpnControlsAvailable =>
       defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.windows ||
       defaultTargetPlatform == TargetPlatform.macOS;
 
@@ -556,6 +559,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (defaultTargetPlatform == TargetPlatform.android) {
       return await _androidVpn.connectHysteria(profile) ? true : null;
     }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return _iosVpn.connectHysteria(profile);
+    }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       return _windowsVpn.connect(
         DesktopEngineProfile.windowsTun(
@@ -580,6 +586,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (defaultTargetPlatform == TargetPlatform.android) {
       return await _androidVpn.connect(profile) ? true : null;
     }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return _iosVpn.connect(profile);
+    }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       return _windowsVpn.connect(
         DesktopEngineProfile.windowsTun(
@@ -602,6 +611,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<String> _vpnStatus() => switch (defaultTargetPlatform) {
     TargetPlatform.android => _androidVpn.status(),
+    TargetPlatform.iOS => _iosVpn.status(),
     TargetPlatform.windows => _windowsVpn.status(),
     TargetPlatform.macOS => _macVpn.status(),
     _ => Future<String>.value('idle'),
@@ -630,6 +640,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _stopVpn() => switch (defaultTargetPlatform) {
     TargetPlatform.android => _androidVpn.stop(),
+    TargetPlatform.iOS => _iosVpn.stop(),
     TargetPlatform.windows => _windowsVpn.stop(),
     TargetPlatform.macOS => _macVpn.stop(),
     _ => Future<void>.value(),
@@ -637,6 +648,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<int> _measureVpn() => switch (defaultTargetPlatform) {
     TargetPlatform.android => _androidVpn.measureLatency(),
+    TargetPlatform.iOS => _iosVpn.measureLatency(),
     TargetPlatform.windows => _windowsVpn.measureLatency(),
     TargetPlatform.macOS => _macVpn.measureLatency(),
     _ => Future<int>.error(StateError('VPN control is unavailable')),
@@ -652,7 +664,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await Future<void>.delayed(const Duration(milliseconds: 500));
         _vpnState = await _vpnStatus();
         if (_vpnState == 'connected') {
-          if (defaultTargetPlatform == TargetPlatform.android) {
+          if (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS) {
             try {
               await _probeWebTraffic();
               _websiteProbeMessage = null;
@@ -736,7 +749,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       });
       if (state == 'connected' &&
-          defaultTargetPlatform == TargetPlatform.android) {
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS)) {
         try {
           await _probeWebTraffic();
         } catch (_) {
@@ -769,6 +783,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _activeNodeId == null ||
         !{
           TargetPlatform.android,
+          TargetPlatform.iOS,
           TargetPlatform.windows,
         }.contains(defaultTargetPlatform)) {
       return;
@@ -776,7 +791,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       await _measureVpn();
       _vpnHealthFailures = 0;
-      if (defaultTargetPlatform == TargetPlatform.android) {
+      if (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS) {
         try {
           await _probeWebTraffic();
           if (_websiteProbeMessage != null && mounted) {
@@ -1158,9 +1174,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ],
                       ] else
                         Text(
-                          defaultTargetPlatform == TargetPlatform.iOS
-                              ? 'VPN для iPhone и iPad готовится. Сейчас можно войти в аккаунт и получить конфигурацию; подключение станет доступно после добавления системного туннеля.'
-                              : 'Подключение появится после входа и получения конфигурации.',
+                          'Подключение появится после входа и получения конфигурации.',
                         ),
                     ],
                   ),
