@@ -14,7 +14,10 @@ class DesktopEngineProfile {
       settings: {
         'name': 'Nona',
         'desc': 'Nona VPN',
-        'mtu': 1400,
+        // Match Android's known-good tunnel MTU. The Windows preview can
+        // reach a small HTTPS probe but browser page loads close the stream;
+        // this leaves more headroom for outer QUIC packet overhead.
+        'mtu': 1280,
         'gateway': ['10.0.0.1/30', 'fd00::1/126'],
         'dns': ['1.1.1.1', '2606:4700:4700::1111'],
         'autoSystemRoutingTable': ['0.0.0.0/0', '::/0'],
