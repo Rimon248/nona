@@ -51,7 +51,16 @@ String normalizeWindowsProcess(String input) {
       {
         'nona_client',
         'xray',
+        'idle',
+        'registry',
         'system',
+        'smss',
+        'csrss',
+        'wininit',
+        'winlogon',
+        'services',
+        'lsass',
+        'lsm',
         'svchost',
       }.contains(name.toLowerCase())) {
     throw const FormatException('Укажите имя программы без пути');
@@ -119,7 +128,7 @@ class DesktopRoutingPolicy {
     final zones = values('directZones', max: desktopRussianZones.length);
     final direct = values('directSites');
     final vpn = values('vpnSites');
-    final processes = values('directProcesses');
+    final processes = values('directProcesses', max: 1000);
     if (!desktopRussianZones.keys.toSet().containsAll(zones) ||
         direct.any((item) => normalizeDesktopSite(item) != item) ||
         vpn.any((item) => normalizeDesktopSite(item) != item) ||
@@ -160,20 +169,41 @@ class DesktopRoutingStore {
 class WindowsProcessCatalog {
   static Future<List<String>> running() async {
     if (!Platform.isWindows) return const [];
-    final result = await Process.run('tasklist', [
-      '/fo',
-      'csv',
-      '/nh',
+    const command =
+        'Get-Process -ErrorAction SilentlyContinue | '
+        'Where-Object { $_.MainWindowHandle -ne 0 } | '
+        'ForEach-Object { $_.ProcessName } | Sort-Object -Unique';
+    final result = await Process.run('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      command,
     ]).timeout(const Duration(seconds: 8));
     if (result.exitCode != 0) {
       throw const ProcessException(
-        'tasklist',
+        'powershell.exe',
         [],
         'Не удалось получить список программ',
         1,
       );
     }
-    return parseTasklist(result.stdout as String);
+    return parseProcessNames(result.stdout as String);
+  }
+
+  static List<String> parseProcessNames(String output) {
+    final names = <String>{};
+    for (final line in const LineSplitter().convert(output)) {
+      final value = line.trim();
+      if (value.isEmpty) continue;
+      try {
+        names.add(normalizeWindowsProcess(value));
+      } on FormatException {
+        // Ignore system and malformed process names.
+      }
+    }
+    return names.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
   }
 
   static List<String> parseTasklist(String output) {
