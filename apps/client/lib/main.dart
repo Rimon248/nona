@@ -11,6 +11,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'internet_routing_screen.dart';
+import 'desktop_routing.dart';
+import 'desktop_routing_screen.dart';
 import 'macos_vpn_control.dart';
 import 'android_vpn_control.dart';
 import 'auth_client.dart';
@@ -558,6 +560,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return _windowsVpn.connect(
         DesktopEngineProfile.windowsTun(
           profile.xrayConfigJson(localSocksPort: 10808),
+          routing: await DesktopRoutingStore.load(),
         ),
       );
     }
@@ -566,6 +569,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         DesktopEngineProfile.macOsTun(
           profile.xrayConfigJson(localSocksPort: 10808),
           tunName: 'utun10',
+          routing: await DesktopRoutingStore.load(),
         ),
       );
     }
@@ -580,6 +584,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return _windowsVpn.connect(
         DesktopEngineProfile.windowsTun(
           profile.configJson(localSocksPort: 10808),
+          routing: await DesktopRoutingStore.load(),
         ),
       );
     }
@@ -588,6 +593,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         DesktopEngineProfile.macOsTun(
           profile.configJson(localSocksPort: 10808),
           tunName: 'utun10',
+          routing: await DesktopRoutingStore.load(),
         ),
       );
     }
@@ -1177,7 +1183,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ),
                 ),
               ),
-              if (defaultTargetPlatform == TargetPlatform.android)
+              if (defaultTargetPlatform == TargetPlatform.android ||
+                  defaultTargetPlatform == TargetPlatform.windows ||
+                  defaultTargetPlatform == TargetPlatform.macOS)
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.apps_outlined),
@@ -1188,7 +1196,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const InternetRoutingScreen(),
+                        builder: (_) =>
+                            defaultTargetPlatform == TargetPlatform.android
+                            ? const InternetRoutingScreen()
+                            : const DesktopRoutingScreen(),
                       ),
                     ),
                   ),
