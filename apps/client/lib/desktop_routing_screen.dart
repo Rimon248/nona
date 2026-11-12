@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import 'desktop_routing.dart';
 
+typedef _SaveDesktopPolicy = Future<bool> Function(DesktopRoutingPolicy policy);
+
 class DesktopRoutingScreen extends StatefulWidget {
   const DesktopRoutingScreen({super.key});
 
@@ -13,8 +15,8 @@ class DesktopRoutingScreen extends StatefulWidget {
 
 class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
   DesktopRoutingPolicy? _policy;
-  List<String> _running = const [];
   bool _saving = false;
+  bool _zonesExpanded = false;
   String? _error;
 
   @override
@@ -26,18 +28,9 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
   Future<void> _load() async {
     try {
       final policy = await DesktopRoutingStore.load();
-      List<String> running = const [];
-      if (Platform.isWindows) {
-        try {
-          running = await WindowsProcessCatalog.running();
-        } on Object {
-          // Manual entry remains available when the process list is blocked.
-        }
-      }
       if (!mounted) return;
       setState(() {
         _policy = policy;
-        _running = running;
         _error = null;
       });
     } on Object {
@@ -47,8 +40,8 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
     }
   }
 
-  Future<void> _save(DesktopRoutingPolicy next) async {
-    if (_saving) return;
+  Future<bool> _save(DesktopRoutingPolicy next) async {
+    if (_saving) return false;
     setState(() {
       _saving = true;
       _error = null;
@@ -56,156 +49,22 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
     try {
       await DesktopRoutingStore.save(next);
       if (mounted) setState(() => _policy = next);
+      return true;
     } on Object {
-      if (mounted) setState(() => _error = 'Не удалось сохранить правило');
+      if (mounted) {
+        setState(
+          () => _error = 'Не удалось сохранить правило. Попробуйте ещё раз.',
+        );
+      }
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<String?> _askValue(String title, String hint) async {
-    var value = '';
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          autofocus: true,
-          decoration: InputDecoration(hintText: hint),
-          onChanged: (typed) => value = typed,
-          onSubmitted: (typed) => Navigator.pop(context, typed),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, value),
-            child: const Text('Добавить'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _addSite({required bool direct}) async {
-    final input = await _askValue(
-      direct ? 'Сайт напрямую' : 'Сайт через VPN',
-      'example.ru или https://пример.рф',
-    );
-    if (input == null || _policy == null) return;
-    try {
-      final domain = normalizeDesktopSite(input);
-      final policy = _policy!;
-      await _save(
-        policy.copyWith(
-          directSites:
-              direct ? {...policy.directSites, domain} : {...policy.directSites}
-                ..remove(domain),
-          vpnSites: direct
-              ? ({...policy.vpnSites}..remove(domain))
-              : {...policy.vpnSites, domain},
-        ),
-      );
-    } on FormatException catch (error) {
-      if (mounted) setState(() => _error = error.message);
-    }
-  }
-
-  Future<void> _addProcess() async {
-    final input = await _askValue('Программа напрямую', 'например, chrome.exe');
-    if (input == null || _policy == null) return;
-    try {
-      final name = normalizeWindowsProcess(input);
-      await _save(
-        _policy!.copyWith(directProcesses: {..._policy!.directProcesses, name}),
-      );
-    } on FormatException catch (error) {
-      if (mounted) setState(() => _error = error.message);
-    }
-  }
-
-  Widget _siteCard(DesktopRoutingPolicy policy, {required bool direct}) {
-    final sites = (direct ? policy.directSites : policy.vpnSites).toList()
-      ..sort();
-    return Card(
-      child: Column(
-        children: [
-          ListTile(
-            title: Text(
-              direct ? 'Свои сайты напрямую' : 'Исключения: сайты через VPN',
-            ),
-            subtitle: Text(
-              direct
-                  ? 'Основной домен и его поддомены используют обычную сеть'
-                  : 'Имеют приоритет перед правилом для всей доменной зоны',
-            ),
-            trailing: IconButton(
-              tooltip: 'Добавить сайт',
-              onPressed: _saving ? null : () => _addSite(direct: direct),
-              icon: const Icon(Icons.add),
-            ),
-          ),
-          for (final site in sites)
-            ListTile(
-              title: Text(site),
-              trailing: IconButton(
-                tooltip: 'Убрать $site',
-                onPressed: _saving
-                    ? null
-                    : () => _save(
-                        policy.copyWith(
-                          directSites: direct
-                              ? ({...policy.directSites}..remove(site))
-                              : null,
-                          vpnSites: direct
-                              ? null
-                              : ({...policy.vpnSites}..remove(site)),
-                        ),
-                      ),
-                icon: const Icon(Icons.close),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _processCard(DesktopRoutingPolicy policy) {
-    final names = {..._running, ...policy.directProcesses}.toList()
-      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return Card(
-      child: Column(
-        children: [
-          ListTile(
-            title: const Text('Программы напрямую'),
-            subtitle: const Text(
-              'Выберите запущенную программу или добавьте имя её .exe файла',
-            ),
-            trailing: IconButton(
-              tooltip: 'Добавить программу',
-              onPressed: _saving ? null : _addProcess,
-              icon: const Icon(Icons.add),
-            ),
-          ),
-          for (final name in names)
-            CheckboxListTile(
-              title: Text('$name.exe'),
-              value: policy.directProcesses.contains(name),
-              onChanged: _saving
-                  ? null
-                  : (checked) => _save(
-                      policy.copyWith(
-                        directProcesses: checked == true
-                            ? {...policy.directProcesses, name}
-                            : ({...policy.directProcesses}..remove(name)),
-                      ),
-                    ),
-            ),
-        ],
-      ),
-    );
+  Future<void> _open(Widget page) async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => page));
   }
 
   @override
@@ -217,60 +76,87 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
           ? Center(
               child: _error == null
                   ? const CircularProgressIndicator()
-                  : TextButton(
-                      onPressed: _load,
-                      child: Text('$_error. Повторить'),
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_error!),
+                        TextButton(
+                          onPressed: _load,
+                          child: const Text('Повторить'),
+                        ),
+                      ],
                     ),
             )
           : Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 860),
                 child: ListView(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                   children: [
-                    const Text(
-                      'Изменения применятся после переподключения VPN.',
-                    ),
-                    const SizedBox(height: 12),
-                    Card(
-                      child: Column(
-                        children: [
-                          const ListTile(
-                            title: Text('Российские доменные зоны напрямую'),
-                            subtitle: Text(
-                              'Включите зоны, сайты которых должны идти через обычную сеть',
-                            ),
-                          ),
-                          for (final zone in desktopRussianZones.entries)
-                            SwitchListTile(
-                              title: Text('Все сайты в зоне ${zone.value}'),
-                              value: policy.directZones.contains(zone.key),
-                              onChanged: _saving
-                                  ? null
-                                  : (enabled) => _save(
-                                      policy.copyWith(
-                                        directZones: enabled
-                                            ? {...policy.directZones, zone.key}
-                                            : ({...policy.directZones}
-                                                ..remove(zone.key)),
-                                      ),
-                                    ),
-                            ),
-                        ],
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(8, 4, 8, 12),
+                      child: Text(
+                        'Отмеченное идёт через обычную сеть. Остальной трафик идёт через VPN. '
+                        'Изменения применятся после переподключения VPN.',
                       ),
                     ),
-                    _siteCard(policy, direct: true),
-                    _siteCard(policy, direct: false),
-                    if (Platform.isWindows) _processCard(policy),
-                    if (Platform.isMacOS)
+                    _sitesModeCard(policy),
+                    const SizedBox(height: 8),
+                    if (Platform.isWindows)
+                      Card(
+                        child: ListTile(
+                          title: const Text('Приложения мимо VPN'),
+                          subtitle: Text(
+                            policy.directProcesses.isEmpty
+                                ? 'Выберите программы, которые должны подключаться через обычную сеть'
+                                : '${policy.directProcesses.length} программ идут напрямую',
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => _open(
+                            _DesktopProcessesPage(policy: policy, save: _save),
+                          ),
+                        ),
+                      )
+                    else
                       const Card(
                         child: ListTile(
-                          title: Text('Маршрутизация программ на Mac'),
+                          title: Text('Приложения мимо VPN'),
                           subtitle: Text(
-                            'Текущее ядро Xray определяет процессы для правил только в Windows и Linux. На Mac доступны правила сайтов.',
+                            'Маршрутизация отдельных программ на Mac сейчас недоступна. '
+                            'Здесь можно настроить прямой маршрут для сайтов.',
                           ),
                         ),
                       ),
+                    const SizedBox(height: 8),
+                    Card(
+                      child: ListTile(
+                        title: const Text('Свои сайты'),
+                        subtitle: Text(
+                          policy.directSites.isEmpty
+                              ? 'Добавьте сайты для прямого соединения'
+                              : '${policy.directSites.length} сайтов идут напрямую',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _open(
+                          _DesktopCustomSitesPage(policy: policy, save: _save),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Card(
+                      child: ListTile(
+                        title: const Text('Сайты через VPN'),
+                        subtitle: Text(
+                          policy.vpnSites.isEmpty
+                              ? 'Исключения для сайтов в прямых доменных зонах'
+                              : '${policy.vpnSites.length} сайтов идут через VPN',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _open(
+                          _DesktopVpnSitesPage(policy: policy, save: _save),
+                        ),
+                      ),
+                    ),
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.all(12),
@@ -282,9 +168,12 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
                         ),
                       ),
                     const Padding(
-                      padding: EdgeInsets.all(12),
+                      padding: EdgeInsets.fromLTRB(8, 16, 8, 0),
                       child: Text(
-                        'Правило сайта зависит от имени, доступного ядру в HTTP/TLS/QUIC. Собственный защищённый DNS и скрытое имя сайта могут помешать распознаванию. В Windows выбор программы действует для всех её соединений.',
+                        'Правило сайта зависит от имени, доступного ядру в HTTP/TLS/QUIC. '
+                        'Собственный защищённый DNS, скрытое имя сайта и подключение по IP '
+                        'могут помешать распознаванию. В Windows выбранная программа использует '
+                        'обычную сеть для всех своих соединений.',
                       ),
                     ),
                   ],
@@ -293,4 +182,543 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
             ),
     );
   }
+
+  Widget _sitesModeCard(DesktopRoutingPolicy policy) {
+    final enabled = policy.directZones.isNotEmpty;
+    return Card(
+      child: Column(
+        children: [
+          SwitchListTile(
+            title: const Text('Российские сайты напрямую'),
+            subtitle: const Text(
+              'Сайты в выбранных российских доменных зонах подключаются через обычную сеть.',
+            ),
+            value: enabled,
+            onChanged: _saving
+                ? null
+                : (value) => _save(
+                    policy.copyWith(
+                      directZones: value
+                          ? desktopRussianZones.keys.toSet()
+                          : <String>{},
+                    ),
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+            child: Row(
+              children: [
+                TextButton(
+                  onPressed: () =>
+                      setState(() => _zonesExpanded = !_zonesExpanded),
+                  child: Text(_zonesExpanded ? 'Скрыть детали' : 'Подробнее'),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () =>
+                      _open(_DesktopZonesPage(policy: policy, save: _save)),
+                  child: const Text('Выбрать сайты'),
+                ),
+              ],
+            ),
+          ),
+          if (_zonesExpanded)
+            for (final zone in desktopRussianZones.entries)
+              CheckboxListTile(
+                title: Text('Все сайты в зоне ${zone.value}'),
+                value: policy.directZones.contains(zone.key),
+                onChanged: _saving
+                    ? null
+                    : (checked) => _save(
+                        policy.copyWith(
+                          directZones: checked == true
+                              ? {...policy.directZones, zone.key}
+                              : ({...policy.directZones}..remove(zone.key)),
+                        ),
+                      ),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopZonesPage extends StatefulWidget {
+  const _DesktopZonesPage({required this.policy, required this.save});
+  final DesktopRoutingPolicy policy;
+  final _SaveDesktopPolicy save;
+
+  @override
+  State<_DesktopZonesPage> createState() => _DesktopZonesPageState();
+}
+
+class _DesktopZonesPageState extends State<_DesktopZonesPage> {
+  late DesktopRoutingPolicy _policy = widget.policy;
+
+  Future<void> _set(String zone, bool enabled) async {
+    final zones = {..._policy.directZones};
+    if (enabled) {
+      zones.add(zone);
+    } else {
+      zones.remove(zone);
+    }
+    final next = _policy.copyWith(directZones: zones);
+    if (await widget.save(next) && mounted) setState(() => _policy = next);
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Российские сайты')),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                'Отметка означает прямой маршрут. Доменные зоны включают все сайты в них; '
+                'можно выбрать только нужные зоны.',
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                children: [
+                  for (final zone in desktopRussianZones.entries)
+                    CheckboxListTile(
+                      title: Text('Все сайты в зоне ${zone.value}'),
+                      value: _policy.directZones.contains(zone.key),
+                      onChanged: (value) => _set(zone.key, value == true),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _DesktopCustomSitesPage extends StatefulWidget {
+  const _DesktopCustomSitesPage({required this.policy, required this.save});
+  final DesktopRoutingPolicy policy;
+  final _SaveDesktopPolicy save;
+
+  @override
+  State<_DesktopCustomSitesPage> createState() =>
+      _DesktopCustomSitesPageState();
+}
+
+class _DesktopCustomSitesPageState extends State<_DesktopCustomSitesPage> {
+  late DesktopRoutingPolicy _policy = widget.policy;
+  String _search = '';
+  String? _error;
+
+  Future<void> _add() async {
+    final input = await _askSite(context, 'Добавить сайт');
+    if (input == null) return;
+    try {
+      final domain = normalizeDesktopSite(input);
+      final next = _policy.copyWith(
+        directSites: {..._policy.directSites, domain},
+        vpnSites: {..._policy.vpnSites}..remove(domain),
+      );
+      if (await widget.save(next) && mounted) {
+        setState(() {
+          _policy = next;
+          _error = null;
+        });
+      }
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
+  }
+
+  Future<void> _remove(String site) async {
+    final next = _policy.copyWith(
+      directSites: {..._policy.directSites}..remove(site),
+    );
+    if (await widget.save(next) && mounted) setState(() => _policy = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sites =
+        _policy.directSites
+            .where((site) => site.contains(_search.toLowerCase()))
+            .toList()
+          ..sort();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Свои сайты')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  'Добавьте сайты, которые должны подключаться напрямую. Поддомены также пойдут через обычную сеть.',
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Найти сайт',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (value) =>
+                      setState(() => _search = value.toLowerCase()),
+                ),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: sites.isEmpty
+                    ? const Center(child: Text('Сайты не добавлены'))
+                    : ListView.builder(
+                        itemCount: sites.length,
+                        itemBuilder: (context, index) => ListTile(
+                          title: Text(sites[index]),
+                          trailing: IconButton(
+                            tooltip: 'Удалить ${sites[index]}',
+                            onPressed: () => _remove(sites[index]),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _add,
+              child: const Text('Добавить сайт'),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopVpnSitesPage extends StatefulWidget {
+  const _DesktopVpnSitesPage({required this.policy, required this.save});
+  final DesktopRoutingPolicy policy;
+  final _SaveDesktopPolicy save;
+
+  @override
+  State<_DesktopVpnSitesPage> createState() => _DesktopVpnSitesPageState();
+}
+
+class _DesktopVpnSitesPageState extends State<_DesktopVpnSitesPage> {
+  late DesktopRoutingPolicy _policy = widget.policy;
+  String _search = '';
+  String? _error;
+
+  Future<void> _add() async {
+    final input = await _askSite(context, 'Сайт через VPN');
+    if (input == null) return;
+    try {
+      final domain = normalizeDesktopSite(input);
+      final next = _policy.copyWith(
+        vpnSites: {..._policy.vpnSites, domain},
+        directSites: {..._policy.directSites}..remove(domain),
+      );
+      if (await widget.save(next) && mounted) {
+        setState(() {
+          _policy = next;
+          _error = null;
+        });
+      }
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
+  }
+
+  Future<void> _remove(String site) async {
+    final next = _policy.copyWith(
+      vpnSites: {..._policy.vpnSites}..remove(site),
+    );
+    if (await widget.save(next) && mounted) setState(() => _policy = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sites =
+        _policy.vpnSites
+            .where((site) => site.contains(_search.toLowerCase()))
+            .toList()
+          ..sort();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Сайты через VPN')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  'Добавьте исключения для сайтов внутри выбранных доменных зон. Их трафик будет идти через VPN.',
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Найти сайт',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (value) =>
+                      setState(() => _search = value.toLowerCase()),
+                ),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: sites.isEmpty
+                    ? const Center(child: Text('Исключения не добавлены'))
+                    : ListView.builder(
+                        itemCount: sites.length,
+                        itemBuilder: (context, index) => ListTile(
+                          title: Text(sites[index]),
+                          trailing: IconButton(
+                            tooltip: 'Удалить ${sites[index]}',
+                            onPressed: () => _remove(sites[index]),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _add,
+              child: const Text('Добавить сайт'),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopProcessesPage extends StatefulWidget {
+  const _DesktopProcessesPage({required this.policy, required this.save});
+  final DesktopRoutingPolicy policy;
+  final _SaveDesktopPolicy save;
+
+  @override
+  State<_DesktopProcessesPage> createState() => _DesktopProcessesPageState();
+}
+
+class _DesktopProcessesPageState extends State<_DesktopProcessesPage> {
+  late DesktopRoutingPolicy _policy = widget.policy;
+  List<String> _running = const [];
+  String _search = '';
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final running = await WindowsProcessCatalog.running();
+      if (mounted) setState(() => _running = running);
+    } on Object {
+      if (mounted) {
+        setState(
+          () => _error = 'Не удалось прочитать список запущенных программ',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _set(String name, bool direct) async {
+    final processes = {..._policy.directProcesses};
+    if (direct) {
+      processes.add(name);
+    } else {
+      processes.remove(name);
+    }
+    final next = _policy.copyWith(directProcesses: processes);
+    if (await widget.save(next) && mounted) setState(() => _policy = next);
+  }
+
+  Future<void> _add() async {
+    final input = await _askValue(
+      context,
+      'Добавить программу',
+      'например, chrome.exe',
+    );
+    if (input == null) return;
+    try {
+      final name = normalizeWindowsProcess(input);
+      await _set(name, true);
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final names = {..._running, ..._policy.directProcesses}.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final visible = names
+        .where((name) => name.toLowerCase().contains(_search.toLowerCase()))
+        .toList();
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Приложения мимо VPN'),
+        actions: [
+          IconButton(
+            tooltip: 'Обновить список',
+            onPressed: _refresh,
+            icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            tooltip: 'Добавить программу',
+            onPressed: _add,
+            icon: const Icon(Icons.add),
+          ),
+        ],
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  'Отмеченные программы полностью обходят VPN, в том числе в фоне. '
+                  'Список читается только на этом компьютере и не отправляется на сервер.',
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: TextField(
+                  decoration: const InputDecoration(
+                    labelText: 'Найти приложение',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                  onChanged: (value) => setState(() => _search = value),
+                ),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : visible.isEmpty
+                    ? const Center(
+                        child: Text('Подходящие приложения не найдены'),
+                      )
+                    : ListView.builder(
+                        itemCount: visible.length,
+                        itemBuilder: (context, index) {
+                          final name = visible[index];
+                          return CheckboxListTile(
+                            title: Text('$name.exe'),
+                            value: _policy.directProcesses.contains(name),
+                            onChanged: (value) => _set(name, value == true),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<String?> _askSite(BuildContext context, String title) => _askValue(
+  context,
+  title,
+  'example.ru или https://пример.рф',
+  label: 'Домен или HTTPS-адрес',
+);
+
+Future<String?> _askValue(
+  BuildContext context,
+  String title,
+  String hint, {
+  String? label,
+}) async {
+  var value = '';
+  return showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: TextField(
+        autofocus: true,
+        keyboardType: label == null ? TextInputType.text : TextInputType.url,
+        decoration: InputDecoration(labelText: label, hintText: hint),
+        onChanged: (typed) => value = typed,
+        onSubmitted: (typed) => Navigator.pop(context, typed),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, value),
+          child: const Text('Добавить'),
+        ),
+      ],
+    ),
+  );
 }
