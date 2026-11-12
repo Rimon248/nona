@@ -14,13 +14,14 @@ class DesktopEngineProfile {
       settings: {
         'name': 'Nona',
         'desc': 'Nona VPN',
-        // Match Android's known-good tunnel MTU. The Windows preview can
-        // reach a small HTTPS probe but browser page loads close the stream;
-        // this leaves more headroom for outer QUIC packet overhead.
+        // Match Android's known-good tunnel MTU.
         'mtu': 1280,
-        'gateway': ['10.0.0.1/30', 'fd00::1/126'],
-        'dns': ['1.1.1.1', '2606:4700:4700::1111'],
-        'autoSystemRoutingTable': ['0.0.0.0/0', '::/0'],
+        // VDSina has working IPv4 egress but no IPv6 egress. Do not send
+        // IPv6 into this node; misconfigtun below blocks it instead of
+        // allowing it to bypass the VPN via the physical interface.
+        'gateway': ['10.0.0.1/30'],
+        'dns': ['1.1.1.1'],
+        'autoSystemRoutingTable': ['0.0.0.0/0'],
         'autoOutboundsInterface': 'auto',
         'autoSystemWfpBlockLeak': ['dns', 'misconfigtun'],
       },
