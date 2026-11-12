@@ -1158,7 +1158,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ],
                       ] else
                         Text(
-                          'Подключение появится после входа и получения конфигурации.',
+                          defaultTargetPlatform == TargetPlatform.iOS
+                              ? 'VPN для iPhone и iPad готовится. Сейчас можно войти в аккаунт и получить конфигурацию; подключение станет доступно после добавления системного туннеля.'
+                              : 'Подключение появится после входа и получения конфигурации.',
                         ),
                     ],
                   ),
