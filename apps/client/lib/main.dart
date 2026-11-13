@@ -577,6 +577,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     setState(() {
       _busy = true;
+      _vpnState = 'connecting';
       _message = null;
       _lastConnectionError = null;
       _latencyMs = null;
@@ -671,8 +672,10 @@ class _HomeScreenState extends State<HomeScreen> {
     } finally {
       if (seed != null) seed.fillRange(0, seed.length, 0);
       if (mounted) {
-        if (_lastConnectionError != null && _vpnState == 'idle') {
+        if (_lastConnectionError != null && _vpnState != 'connected') {
           _vpnState = 'blocked';
+        } else if (_vpnState == 'connecting') {
+          _vpnState = 'idle';
         }
         setState(() => _busy = false);
         if (measureOnConnect && _vpnState == 'connected') {

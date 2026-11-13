@@ -18,6 +18,12 @@ class RoutingSummary {
     final directApps = state.apps.where(
       (app) => policy.directApp(app.packageName, state.appCatalogue),
     );
+    final directIds = <String>{
+      ...directApps.map((app) => app.packageName),
+      ...policy.appOverrides.entries
+          .where((entry) => entry.value)
+          .map((entry) => entry.key),
+    };
     return RoutingSummary(
       russianSites: state.sites.where(policy.directSite).length,
       russianApps: directApps
@@ -28,7 +34,7 @@ class RoutingSummary {
           )
           .length,
       customSites: policy.customSites.length,
-      bypassedApps: directApps.length,
+      bypassedApps: directIds.length,
     );
   }
 }

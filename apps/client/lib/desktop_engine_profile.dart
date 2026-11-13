@@ -17,6 +17,7 @@ class DesktopEngineProfile {
     return _tun(
       proxyConfigJson,
       routing: routing,
+      includeWindowsProcesses: true,
       settings: {
         'name': 'Nona',
         'desc': 'Nona VPN',
@@ -56,6 +57,7 @@ class DesktopEngineProfile {
     String proxyConfigJson, {
     required Map<String, Object?> settings,
     InternetRoutingState? routing,
+    bool includeWindowsProcesses = false,
   }) {
     final decoded = jsonDecode(proxyConfigJson);
     if (decoded is! Map<String, dynamic> ||
@@ -74,8 +76,24 @@ class DesktopEngineProfile {
 
     final directDomains = <String>{};
     final proxyDomains = <String>{};
+    final directProcesses = <String>{};
     if (routing != null) {
       final policy = routing.policy;
+      if (includeWindowsProcesses) {
+        directProcesses.addAll(
+          routing.apps
+              .where(
+                (app) =>
+                    policy.directApp(app.packageName, routing.appCatalogue),
+              )
+              .map((app) => app.packageName),
+        );
+        directProcesses.addAll(
+          policy.appOverrides.entries
+              .where((entry) => entry.value)
+              .map((entry) => entry.key),
+        );
+      }
       for (final site in routing.sites) {
         final rule = 'domain:${site.domain}';
         if (policy.directSite(site)) {
@@ -85,6 +103,14 @@ class DesktopEngineProfile {
         }
       }
       directDomains.addAll(policy.customSites.map((site) => 'domain:$site'));
+    }
+    final validProcesses = <String>{};
+    for (final process in directProcesses) {
+      try {
+        validProcesses.add(normalizeWindowsProcessName(process));
+      } on FormatException {
+        // Ignore stale or malformed local selections.
+      }
     }
 
     return jsonEncode({
@@ -108,6 +134,12 @@ class DesktopEngineProfile {
       'routing': {
         'domainStrategy': 'AsIs',
         'rules': [
+          if (validProcesses.isNotEmpty)
+            {
+              'type': 'field',
+              'process': validProcesses.toList(),
+              'outboundTag': 'direct',
+            },
           if (proxyDomains.isNotEmpty)
             {
               'type': 'field',

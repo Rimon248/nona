@@ -218,7 +218,10 @@ final class MacOSVpnControl: NSObject {
       )
     }
     commands.append(": > \(logPath); /bin/chmod 600 \(logPath)")
-    commands.append("/usr/bin/nohup \(executable) run -config \(configPath) >\(logPath) 2>&1 </dev/null &")
+    // AppleScript runs without a controlling terminal. macOS `nohup` tries to
+    // detach from one and exits before Xray starts; redirected background I/O
+    // is sufficient for this non-interactive shell.
+    commands.append("\(executable) run -config \(configPath) >\(logPath) 2>&1 </dev/null &")
     commands.append("pid=$!")
     commands.append("i=0; while [ $i -lt 32 ]; do if /sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1; then break; fi; if ! /bin/kill -0 $pid 2>/dev/null; then echo 'Xray завершился до создания системного туннеля. Подробности сохранены в закрытом журнале Ноны.' >&2; exit 1; fi; /bin/sleep 0.25; i=$((i+1)); done")
     commands.append("/sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1 || { echo 'Xray не создал системный туннель за 8 секунд. Подробности сохранены в закрытом журнале Ноны.' >&2; exit 1; }")

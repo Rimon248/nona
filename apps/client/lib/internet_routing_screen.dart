@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'android_app_routing.dart';
@@ -793,6 +794,49 @@ class _AppListPageState extends State<_AppListPage> {
     if (await widget.save(next) && mounted) setState(() => _policy = next);
   }
 
+  Future<void> _addWindowsProcess() async {
+    final data = _data;
+    final policy = _policy;
+    if (data == null || policy == null) return;
+    var typed = '';
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Добавить программу'),
+        content: TextField(
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Имя исполняемого файла',
+            hintText: 'chrome.exe',
+          ),
+          onChanged: (text) => typed = text,
+          onSubmitted: (_) => Navigator.pop(context, typed),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, typed),
+            child: const Text('Добавить'),
+          ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    try {
+      final name = normalizeWindowsProcessName(value);
+      final next = policy.withApp(name, true, data.appCatalogue);
+      if (await widget.save(next) && mounted) setState(() => _policy = next);
+    } on FormatException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = _data;
@@ -805,7 +849,12 @@ class _AppListPageState extends State<_AppListPage> {
       for (final id in policy.appOverrides.keys) {
         known.putIfAbsent(
           id,
-          () => LaunchableApp(packageName: id, label: '$id (не найдено)'),
+          () => LaunchableApp(
+            packageName: id,
+            label: defaultTargetPlatform == TargetPlatform.windows
+                ? '$id.exe (сохранено)'
+                : '$id (не найдено)',
+          ),
         );
       }
     }
@@ -845,7 +894,11 @@ class _AppListPageState extends State<_AppListPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Text(
-              widget.russianOnly ? 'Отмеченные приложения идут напрямую' : 'Отмеченные приложения полностью обходят VPN. Список хранится на устройстве.',
+              defaultTargetPlatform == TargetPlatform.windows
+                  ? 'Показаны запущенные программы. Можно добавить закрытую программу по имени файла .exe. Отмеченные программы идут напрямую после переподключения.'
+                  : widget.russianOnly
+                  ? 'Отмеченные приложения идут напрямую'
+                  : 'Отмеченные приложения полностью обходят VPN. Список хранится на устройстве.',
               style: const TextStyle(color: NonaColor.muted, fontSize: 13),
             ),
           ),
@@ -878,6 +931,18 @@ class _AppListPageState extends State<_AppListPage> {
               ),
             ),
           ),
+          if (defaultTargetPlatform == TargetPlatform.windows &&
+              !widget.russianOnly)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: OutlinedButton.icon(
+                onPressed: data == null || policy == null
+                    ? null
+                    : _addWindowsProcess,
+                icon: const Icon(Icons.add),
+                label: const Text('Добавить программу по имени .exe'),
+              ),
+            ),
           Expanded(
             child: data == null || policy == null
                 ? _loadingDataArea(

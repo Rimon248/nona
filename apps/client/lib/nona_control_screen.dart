@@ -328,6 +328,10 @@ class NonaControlScreen extends StatelessWidget {
 
   String get _desktopDetailTitle => _connected
       ? 'Вы на связи'
+      : vpnState == 'connecting'
+      ? 'Подключаемся к VPN'
+      : vpnState == 'disconnecting'
+      ? 'Отключаем VPN'
       : vpnState == 'error'
       ? 'Нужна проверка'
       : vpnState == 'blocked'
@@ -342,6 +346,10 @@ class NonaControlScreen extends StatelessWidget {
       ? routingAvailable
             ? 'Подключение работает через выбранный канал. Прямые маршруты используют обычную сеть.'
             : 'Подключение работает через выбранный канал.'
+      : vpnState == 'connecting'
+      ? 'Проверяем доступный канал и запускаем системный туннель. Подождите.'
+      : vpnState == 'disconnecting'
+      ? 'Завершаем соединение и возвращаем сетевые настройки. Подождите.'
       : !signedIn
       ? 'Войдите в аккаунт, чтобы Нона получила настройки этого устройства.'
       : onConnectionTap == null
@@ -515,7 +523,11 @@ class NonaControlScreen extends StatelessWidget {
   }
 
   Widget _statusRing(double size) {
-    final unavailable = onConnectionTap == null && !_connected;
+    final unavailable =
+        onConnectionTap == null &&
+        !_connected &&
+        vpnState != 'connecting' &&
+        vpnState != 'disconnecting';
     return Semantics(
       button: true,
       enabled: !unavailable,
@@ -1239,14 +1251,14 @@ class NonaControlScreen extends StatelessWidget {
         ),
         routeRow(
           'Приложения мимо VPN',
-          defaultTargetPlatform == TargetPlatform.android
-              ? count(summary?.bypassedApps, 'приложений в списке')
-              : const Text(
-                  'Маршруты приложений пока доступны только на Android',
+          defaultTargetPlatform == TargetPlatform.macOS
+              ? const Text(
+                  'Маршрутизация приложений на Mac пока недоступна',
                   style: TextStyle(color: NonaColor.muted, fontSize: 12),
-                ),
+                )
+              : count(summary?.bypassedApps, 'приложений в списке'),
           'apps',
-          supported: defaultTargetPlatform == TargetPlatform.android,
+          supported: defaultTargetPlatform != TargetPlatform.macOS,
         ),
         const SizedBox(height: 14),
         const Text(

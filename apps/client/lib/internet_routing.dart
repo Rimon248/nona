@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -323,11 +324,62 @@ class InternetRoutingClient {
       }
     }
     return InternetRoutingState(
-      apps: const [],
+      apps: defaultTargetPlatform == TargetPlatform.windows
+          ? await _runningWindowsApps()
+          : const [],
       sites: sites,
       appCatalogue: const {},
       policy: policy,
     );
+  }
+
+  Future<List<LaunchableApp>> _runningWindowsApps() async {
+    try {
+      final result = await Process.run('tasklist', const [
+        '/FO',
+        'CSV',
+        '/NH',
+      ]).timeout(const Duration(seconds: 5));
+      if (result.exitCode != 0) return const [];
+      final names = <String, LaunchableApp>{};
+      const system = {
+        'nona_client',
+        'xray',
+        'system',
+        'idle',
+        'svchost',
+        'services',
+        'lsass',
+        'csrss',
+        'smss',
+        'wininit',
+        'winlogon',
+        'dwm',
+        'fontdrvhost',
+        'registry',
+        'sihost',
+        'taskhostw',
+      };
+      for (final line in (result.stdout as String).split(RegExp(r'\r?\n'))) {
+        final match = RegExp(
+          r'^"([^"]+\.exe)"',
+          caseSensitive: false,
+        ).firstMatch(line);
+        if (match == null) continue;
+        final filename = match.group(1)!;
+        final name = filename.substring(0, filename.length - 4);
+        if (system.contains(name.toLowerCase())) continue;
+        names.putIfAbsent(
+          name,
+          () => LaunchableApp(packageName: name, label: filename),
+        );
+      }
+      return names.values.toList()..sort(
+        (a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()),
+      );
+    } catch (_) {
+      return const [];
+    }
   }
 }
 
@@ -362,4 +414,22 @@ String normalizeCustomSite(String input) {
     throw const FormatException('Укажите домен, например example.ru');
   }
   return host;
+}
+
+/// Xray matches the executable basename on Windows and ignores `.exe`.
+String normalizeWindowsProcessName(String input) {
+  var name = input.trim();
+  if (name.toLowerCase().endsWith('.exe')) {
+    name = name.substring(0, name.length - 4);
+  }
+  if (name.isEmpty ||
+      name.length > 128 ||
+      name == '.' ||
+      name == '..' ||
+      name.contains(RegExp(r'[\\/:*?"<>|\x00-\x1f]'))) {
+    throw const FormatException(
+      'Укажите имя исполняемого файла, например chrome.exe',
+    );
+  }
+  return name;
 }
