@@ -1,4 +1,8 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'android_app_routing.dart';
 
@@ -175,6 +179,12 @@ class InternetRoutingClient {
 
   final MethodChannel _channel;
   final bool _shareLoads;
+  static const _desktopPolicyKey = 'nona.desktop_internet_policy.v1';
+
+  bool get _desktop =>
+      _shareLoads &&
+      (defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.windows);
 
   Future<InternetRoutingState> load() {
     if (!_shareLoads) return _loadFromChannel();
@@ -192,6 +202,7 @@ class InternetRoutingClient {
   }
 
   Future<InternetRoutingState> _loadFromChannel() async {
+    if (_desktop) return _loadDesktop();
     final raw = await _channel.invokeMethod<Map<Object?, Object?>>('getState');
     if (raw == null ||
         raw['apps'] is! List ||
@@ -250,15 +261,73 @@ class InternetRoutingClient {
   }
 
   Future<void> save(InternetPolicy policy) async {
+    if (_desktop) {
+      await SharedPreferencesAsync().setString(
+        _desktopPolicyKey,
+        jsonEncode(policy.toChannel()),
+      );
+      return;
+    }
     await _channel.invokeMethod<void>('saveInternetPolicy', policy.toChannel());
   }
 
   Future<String> normalizeSite(String input) async {
+    if (_desktop) return normalizeCustomSite(input);
     final site = await _channel.invokeMethod<String>('normalizeSite', input);
     if (site == null || site.isEmpty) {
       throw const FormatException('Неверный домен');
     }
     return site;
+  }
+
+  Future<InternetRoutingState> _loadDesktop() async {
+    final catalogue = jsonDecode(
+      await rootBundle.loadString('assets/routing/desktop_sites.json'),
+    );
+    if (catalogue is! List) {
+      throw const FormatException('Invalid site catalogue');
+    }
+    final sites = <RussianSite>[];
+    for (final raw in catalogue) {
+      if (raw is! Map ||
+          raw['domain'] is! String ||
+          raw['label'] is! String ||
+          raw['essential'] is! bool ||
+          raw['zone'] is! bool) {
+        throw const FormatException('Invalid site catalogue');
+      }
+      sites.add(
+        RussianSite(
+          domain: raw['domain'] as String,
+          label: raw['label'] as String,
+          essential: raw['essential'] as bool,
+          zone: raw['zone'] as bool,
+        ),
+      );
+    }
+    final saved = await SharedPreferencesAsync().getString(_desktopPolicyKey);
+    InternetPolicy policy = const InternetPolicy(
+      sitesMode: DirectMode.all,
+      appsMode: DirectMode.off,
+      siteOverrides: {},
+      appOverrides: {},
+      customSites: [],
+    );
+    if (saved != null) {
+      try {
+        policy = InternetPolicy.fromChannel(
+          (jsonDecode(saved) as Map).cast<Object?, Object?>(),
+        );
+      } catch (_) {
+        // Keep the safe default when preferences are damaged.
+      }
+    }
+    return InternetRoutingState(
+      apps: const [],
+      sites: sites,
+      appCatalogue: const {},
+      policy: policy,
+    );
   }
 }
 

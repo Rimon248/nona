@@ -19,6 +19,7 @@ add_executable(${BINARY_NAME} WIN32
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
+target_compile_options(${BINARY_NAME} PRIVATE /utf-8)
 target_link_libraries(${BINARY_NAME} PRIVATE shell32)
 target_link_options(${BINARY_NAME} PRIVATE "/MANIFESTUAC:level='requireAdministrator'")
 

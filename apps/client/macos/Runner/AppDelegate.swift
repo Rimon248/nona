@@ -59,6 +59,10 @@ final class MacOSVpnControl: NSObject {
     supportDirectory.appendingPathComponent("macos-tun-state.json")
   }
 
+  private var startupLogURL: URL {
+    supportDirectory.appendingPathComponent("xray-startup.log")
+  }
+
   func register(with messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: "nona.macos_vpn", binaryMessenger: messenger)
     methodChannel = channel
@@ -148,7 +152,15 @@ final class MacOSVpnControl: NSObject {
   }
 
   private func status() -> String {
-    guard let state = readState() else { return "idle" }
+    guard let state = readState() else {
+      if let route = try? runCommand("/sbin/route", ["-n", "get", "default"]),
+         route.components(separatedBy: .newlines).contains(where: {
+           $0.trimmingCharacters(in: .whitespaces).hasPrefix("interface: utun")
+         }) {
+        return "other-vpn"
+      }
+      return "idle"
+    }
     return processIsXray(state.pid) && interfaceExists(state.interface) ? "connected" : "error"
   }
 
@@ -195,19 +207,21 @@ final class MacOSVpnControl: NSObject {
   private func launchXray(config: URL, interface: String, dns: [NonaDNSState]) throws -> Int32 {
     let executable = shellQuote(engineURL().path)
     let configPath = shellQuote(config.path)
+    let logPath = shellQuote(startupLogURL.path)
     var commands = ["set -e"]
     commands.append("rollback_dns() {\n\(dnsRestoreCommands(dns).joined(separator: "\n"))\n}")
     commands.append("rollback() { if [ -n \"${pid:-}\" ]; then /bin/kill -TERM \"$pid\" 2>/dev/null || true; fi; rollback_dns; }")
     commands.append("trap rollback EXIT")
     for record in dns {
       commands.append(
-        "/usr/sbin/networksetup -setdnsservers \(shellQuote(record.service)) \(dnsAddress) \(dnsAddressV6)"
+        "/usr/sbin/networksetup -setdnsservers \(shellQuote(record.service)) \(dnsAddress) \(dnsAddressV6) || { echo 'Не удалось настроить DNS macOS' >&2; exit 1; }"
       )
     }
-    commands.append("/usr/bin/nohup \(executable) run -config \(configPath) >/dev/null 2>&1 </dev/null &")
+    commands.append(": > \(logPath); /bin/chmod 600 \(logPath)")
+    commands.append("/usr/bin/nohup \(executable) run -config \(configPath) >\(logPath) 2>&1 </dev/null &")
     commands.append("pid=$!")
-    commands.append("i=0; while [ $i -lt 32 ]; do if /sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1; then break; fi; if ! /bin/kill -0 $pid 2>/dev/null; then exit 1; fi; /bin/sleep 0.25; i=$((i+1)); done")
-    commands.append("/sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1")
+    commands.append("i=0; while [ $i -lt 32 ]; do if /sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1; then break; fi; if ! /bin/kill -0 $pid 2>/dev/null; then echo 'Xray завершился до создания системного туннеля. Подробности сохранены в закрытом журнале Ноны.' >&2; exit 1; fi; /bin/sleep 0.25; i=$((i+1)); done")
+    commands.append("/sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1 || { echo 'Xray не создал системный туннель за 8 секунд. Подробности сохранены в закрытом журнале Ноны.' >&2; exit 1; }")
     commands.append("trap - EXIT")
     commands.append("printf '%s\\n' \"$pid\"")
     let output = try runAsAdministrator(commands.joined(separator: "\n"))

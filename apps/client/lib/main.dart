@@ -78,6 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _hasUsableConfiguration = false;
   bool _busy = false;
   String _vpnState = 'idle';
+  String? _lastConnectionError;
   String? _vpnTransport;
   String? _vpnCountry;
   String? _lastConnectedNodeId;
@@ -87,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ConnectionNodeOption> _availableNodes = const [];
   RoutingSummary? _routingSummary;
   InternetRoutingState? _routingData;
+  bool _routingLoadFailed = false;
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
   int _selectedTab = 0;
   int? _latencyMs;
@@ -103,6 +105,11 @@ class _HomeScreenState extends State<HomeScreen> {
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.windows ||
       defaultTargetPlatform == TargetPlatform.macOS;
+
+  String get _manualPreferenceKey =>
+      defaultTargetPlatform == TargetPlatform.android
+      ? 'manual_connection_enabled'
+      : 'manual_connection_enabled_desktop_v2';
 
   @override
   void initState() {
@@ -183,6 +190,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     _restore();
     _updateTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_vpnState == 'other-vpn' && !_busy) {
+        unawaited(_refreshVpnState());
+      }
       if (!mounted || _busy || _auth?.signedIn != true || _deviceId == null) {
         return;
       }
@@ -277,7 +287,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final nodeId = await _preferences.getString('preferred_node_id');
       final transportName = await _preferences.getString('preferred_transport');
       final manualEnabled =
-          await _preferences.getBool('manual_connection_enabled') ?? false;
+          await _preferences.getBool(_manualPreferenceKey) ??
+          defaultTargetPlatform != TargetPlatform.android;
       final lastNodeId = await _preferences.getString('last_connected_node_id');
       if (!mounted) return;
       setState(() {
@@ -330,7 +341,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectedTransport = PreferredTransport.automatic;
       }
     });
-    await _preferences.setBool('manual_connection_enabled', enabled);
+    await _preferences.setBool(_manualPreferenceKey, enabled);
     if (!enabled) {
       await _preferences.remove('preferred_node_id');
       await _preferences.setString(
@@ -341,13 +352,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadRoutingSummary() async {
-    if (defaultTargetPlatform != TargetPlatform.android) return;
     try {
       final data = await InternetRoutingClient().load();
       if (mounted) {
         setState(() {
           _routingData = data;
           _routingSummary = RoutingSummary.fromState(data);
+          _routingLoadFailed = false;
         });
       }
     } catch (_) {
@@ -355,12 +366,14 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _routingData = null;
           _routingSummary = null;
+          _routingLoadFailed = true;
         });
       }
     }
   }
 
   void _selectTab(int tab) {
+    if (tab < 0 || tab > 2) return;
     setState(() => _selectedTab = tab);
     if (tab != 1 || _routingData != null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -373,6 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_selectedTab == 1) {
       await _loadRoutingSummary();
     } else if (_selectedTab == 0) {
+      _lastConnectionError = null;
       await _refreshVpnState();
       if (_auth?.signedIn == true) await _checkUpdates();
       if (_vpnState == 'connected' && !_measuringLatency) {
@@ -536,6 +550,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _retryConnection() async {
+    setState(() => _lastConnectionError = null);
+    await _refreshVpnState();
+    if (_vpnState == 'idle' &&
+        canStartVpn(
+          busy: _busy,
+          vpnState: _vpnState,
+          accessStatus: _auth?.vpnAccessStatus,
+          hasConfiguration: _hasUsableConfiguration,
+        )) {
+      await _connectVpn();
+    }
+  }
+
   Future<void> _connectVpn() async {
     final auth = _auth;
     final vault = _vault;
@@ -550,6 +578,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _busy = true;
       _message = null;
+      _lastConnectionError = null;
       _latencyMs = null;
       _latencyMessage = null;
       _measuringLatency = false;
@@ -627,6 +656,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _message = declined
             ? 'Подключение отменено в системном запросе'
             : 'Ни один VPN-канал сейчас не отвечает';
+        if (!declined) _lastConnectionError = _message;
       } else {
         measureOnConnect = true;
       }
@@ -634,11 +664,16 @@ class _HomeScreenState extends State<HomeScreen> {
       _message = error.code == 'mac-vpn-startup'
           ? (error.message ?? 'Не удалось запустить VPN на Mac')
           : 'Не удалось открыть конфигурацию или запустить VPN';
+      _lastConnectionError = _message;
     } catch (_) {
       _message = 'Не удалось открыть конфигурацию или запустить VPN';
+      _lastConnectionError = _message;
     } finally {
       if (seed != null) seed.fillRange(0, seed.length, 0);
       if (mounted) {
+        if (_lastConnectionError != null && _vpnState == 'idle') {
+          _vpnState = 'blocked';
+        }
         setState(() => _busy = false);
         if (measureOnConnect && _vpnState == 'connected') {
           unawaited(_measureVpnLatency());
@@ -655,6 +690,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return _windowsVpn.connect(
         DesktopEngineProfile.windowsTun(
           profile.xrayConfigJson(localSocksPort: 10808),
+          routing: await _desktopRoutingState(),
         ),
       );
     }
@@ -663,6 +699,7 @@ class _HomeScreenState extends State<HomeScreen> {
         DesktopEngineProfile.macOsTun(
           profile.xrayConfigJson(localSocksPort: 10808),
           tunName: 'utun10',
+          routing: await _desktopRoutingState(),
         ),
       );
     }
@@ -677,6 +714,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return _windowsVpn.connect(
         DesktopEngineProfile.windowsTun(
           profile.configJson(localSocksPort: 10808),
+          routing: await _desktopRoutingState(),
         ),
       );
     }
@@ -685,10 +723,19 @@ class _HomeScreenState extends State<HomeScreen> {
         DesktopEngineProfile.macOsTun(
           profile.configJson(localSocksPort: 10808),
           tunName: 'utun10',
+          routing: await _desktopRoutingState(),
         ),
       );
     }
     return false;
+  }
+
+  Future<InternetRoutingState?> _desktopRoutingState() async {
+    try {
+      return await InternetRoutingClient().load();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<String> _vpnStatus() => switch (defaultTargetPlatform) {
@@ -925,7 +972,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final VoidCallback? mainAction;
     final VoidCallback? connectionAction;
     final String actionLabel;
-    if (_vpnControlsAvailable && _vpnState != 'idle') {
+    if (_vpnControlsAvailable &&
+        _vpnState != 'idle' &&
+        _vpnState != 'other-vpn' &&
+        _vpnState != 'blocked') {
       connectionAction = _busy ? null : _disconnectVpn;
       mainAction = _vpnState == 'connected' && !_busy && !_measuringLatency
           ? _measureVpnLatency
@@ -939,6 +989,10 @@ class _HomeScreenState extends State<HomeScreen> {
       connectionAction = null;
       mainAction = null;
       actionLabel = 'VPN пока недоступно';
+    } else if (_vpnState == 'blocked') {
+      connectionAction = null;
+      mainAction = _busy ? null : () => unawaited(_retryConnection());
+      actionLabel = 'Повторить попытку';
     } else {
       connectionAction = canConnect ? _connectVpn : null;
       mainAction = null;
@@ -952,6 +1006,23 @@ class _HomeScreenState extends State<HomeScreen> {
       null => null,
       _ => 'Доступ к VPN не выдан',
     };
+    final connectionBlockReason = _vpnState == 'other-vpn'
+        ? 'Отключите другой VPN и дождитесь обновления состояния'
+        : _vpnState == 'blocked'
+        ? _lastConnectionError
+        : _busy
+        ? 'Подождите завершения действия'
+        : !signedIn
+        ? 'Войдите через Нону'
+        : _deviceId == null
+        ? 'Устройство ещё не зарегистрировано'
+        : !_vpnControlsAvailable
+        ? 'VPN пока недоступно'
+        : _auth?.vpnAccessStatus != null && _auth?.vpnAccessStatus != 'approved'
+        ? accessLabel
+        : !_hasUsableConfiguration
+        ? _configurationMessage
+        : null;
     return NonaControlScreen(
       selectedTab: _selectedTab,
       onSelectTab: _selectTab,
@@ -967,8 +1038,8 @@ class _HomeScreenState extends State<HomeScreen> {
       onMeasureLatency: _vpnState == 'connected' && !_busy && !_measuringLatency
           ? _measureVpnLatency
           : null,
-      routingAvailable: defaultTargetPlatform == TargetPlatform.android,
-      onOpenRouting: defaultTargetPlatform == TargetPlatform.android
+      routingAvailable: _vpnControlsAvailable,
+      onOpenRouting: _vpnControlsAvailable
           ? () async {
               await Navigator.of(context).push(
                 instantPageRoute<void>(
@@ -978,7 +1049,7 @@ class _HomeScreenState extends State<HomeScreen> {
               if (mounted) unawaited(_loadRoutingSummary());
             }
           : null,
-      onOpenRouteCategory: defaultTargetPlatform == TargetPlatform.android
+      onOpenRouteCategory: _vpnControlsAvailable
           ? (category) async {
               await Navigator.of(context).push(
                 instantPageRoute<void>(
@@ -995,9 +1066,11 @@ class _HomeScreenState extends State<HomeScreen> {
       onLogout: _logout,
       onRetryDevice: _retryDevice,
       configurationMessage: _configurationMessage,
+      connectionBlockReason: connectionBlockReason,
       country: _vpnCountry,
       transport: _vpnTransport,
       routingSummary: _routingSummary,
+      routingLoadFailed: _routingLoadFailed,
       nodeOptions: _availableNodes,
       selectedNodeId: _selectedNodeId,
       selectedTransport: _selectedTransport,

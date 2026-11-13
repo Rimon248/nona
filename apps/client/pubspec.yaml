@@ -28,3 +28,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/brand/nona-portrait.png
+    - assets/routing/desktop_sites.json

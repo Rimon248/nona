@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -28,6 +29,7 @@ class NonaControlScreen extends StatelessWidget {
     required this.onLogout,
     required this.onRetryDevice,
     required this.configurationMessage,
+    this.connectionBlockReason,
     required this.nodeOptions,
     required this.selectedNodeId,
     required this.selectedTransport,
@@ -36,6 +38,7 @@ class NonaControlScreen extends StatelessWidget {
     required this.onSelectNode,
     required this.onSelectTransport,
     this.routingSummary,
+    this.routingLoadFailed = false,
     this.country,
     this.transport,
     this.latencyMs,
@@ -64,9 +67,11 @@ class NonaControlScreen extends StatelessWidget {
   final VoidCallback? onLogout;
   final VoidCallback? onRetryDevice;
   final String configurationMessage;
+  final String? connectionBlockReason;
   final String? country;
   final String? transport;
   final RoutingSummary? routingSummary;
+  final bool routingLoadFailed;
   final List<ConnectionNodeOption> nodeOptions;
   final String? selectedNodeId;
   final PreferredTransport selectedTransport;
@@ -86,18 +91,22 @@ class NonaControlScreen extends StatelessWidget {
     'connected' => 'Подключено',
     'connecting' => 'Подключение',
     'disconnecting' => 'Отключение',
+    'other-vpn' => 'Другой VPN',
+    'blocked' => 'Ошибка запуска',
     'error' => 'Ошибка',
-    _ => 'Не подключено',
+    _ => onConnectionTap == null ? 'Пока недоступно' : 'Не подключено',
   };
 
   String get _statusCaption => switch (vpnState) {
     'connected' => 'Нажмите, чтобы отключить',
     'connecting' => 'Запускаем VPN',
     'disconnecting' => 'Останавливаем VPN',
+    'other-vpn' => 'Отключите другой VPN',
+    'blocked' => 'Повторите попытку кнопкой ниже',
     'error' => 'Проверьте соединение',
     _ =>
       onConnectionTap == null
-          ? 'Ожидаем настройки'
+          ? (connectionBlockReason ?? 'Подождите')
           : 'Нажмите, чтобы подключить',
   };
 
@@ -321,17 +330,25 @@ class NonaControlScreen extends StatelessWidget {
       ? 'Вы на связи'
       : vpnState == 'error'
       ? 'Нужна проверка'
+      : vpnState == 'blocked'
+      ? 'Не удалось подключиться'
+      : vpnState == 'other-vpn'
+      ? 'Другой VPN активен'
+      : onConnectionTap == null
+      ? 'Подключение пока недоступно'
       : 'Готово к подключению';
 
   String get _desktopDetailText => _connected
       ? routingAvailable
             ? 'Подключение работает через выбранный канал. Прямые маршруты используют обычную сеть.'
             : 'Подключение работает через выбранный канал.'
-      : signedIn
-      ? routingAvailable
-            ? 'Нона подключит доступный канал. Прямые маршруты сохранят свой выбор.'
-            : 'Нона подключит доступный канал.'
-      : 'Войдите в аккаунт, чтобы Нона получила настройки этого устройства.';
+      : !signedIn
+      ? 'Войдите в аккаунт, чтобы Нона получила настройки этого устройства.'
+      : onConnectionTap == null
+      ? (connectionBlockReason ?? configurationMessage)
+      : routingAvailable
+      ? 'Нона подключит доступный канал. Прямые маршруты сохранят свой выбор.'
+      : 'Нона подключит доступный канал.';
 
   @override
   Widget build(BuildContext context) => AnnotatedRegion<SystemUiOverlayStyle>(
@@ -498,8 +515,10 @@ class NonaControlScreen extends StatelessWidget {
   }
 
   Widget _statusRing(double size) {
+    final unavailable = onConnectionTap == null && !_connected;
     return Semantics(
       button: true,
+      enabled: !unavailable,
       label: _connected ? 'Отключить' : 'Подключить',
       child: InkWell(
         key: const ValueKey('connection-ring'),
@@ -516,7 +535,12 @@ class NonaControlScreen extends StatelessWidget {
                 height: size,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF7290A1), width: 2),
+                  border: Border.all(
+                    color: unavailable
+                        ? NonaColor.coral
+                        : const Color(0xFF7290A1),
+                    width: unavailable ? 3 : 2,
+                  ),
                 ),
               ),
               Container(
@@ -524,7 +548,11 @@ class NonaControlScreen extends StatelessWidget {
                 height: size - 25,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF385A70)),
+                  border: Border.all(
+                    color: unavailable
+                        ? NonaColor.coral.withValues(alpha: 0.65)
+                        : const Color(0xFF385A70),
+                  ),
                 ),
               ),
               Positioned(
@@ -533,8 +561,8 @@ class NonaControlScreen extends StatelessWidget {
                 child: Container(
                   width: 16,
                   height: 16,
-                  decoration: const BoxDecoration(
-                    color: NonaColor.coral,
+                  decoration: BoxDecoration(
+                    color: unavailable ? NonaColor.muted : NonaColor.coral,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -562,11 +590,11 @@ class NonaControlScreen extends StatelessWidget {
                     width: size - 48,
                     child: Text(
                       _statusCaption,
-                      maxLines: 2,
+                      maxLines: 4,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: NonaColor.muted,
-                        fontSize: 12,
+                        fontSize: 11,
                       ),
                     ),
                   ),
@@ -693,7 +721,6 @@ class NonaControlScreen extends StatelessWidget {
               _sideItem('Состояние', 0),
               _sideItem('Маршруты', 1),
               _sideItem('Аккаунт', 2),
-              _sideItem('Настройки', 3),
               const Spacer(),
               const Text(
                 'Виртуальный помощник Нона',
@@ -837,14 +864,16 @@ class NonaControlScreen extends StatelessWidget {
                 children: [
                   const _Eyebrow('Прямо сейчас'),
                   const SizedBox(height: 10),
-                  if (manualConnectionEnabled) _connectionSettings(context),
+                  if (manualConnectionEnabled) ...[
+                    _connectionSettings(context),
+                    const SizedBox(height: 8),
+                  ],
                   _metric('Текущий канал', _channel),
                   _metric(
                     'Задержка HTTPS',
                     latencyMs == null ? '—' : '$latencyMs мс',
                     warm: latencyMs != null,
                   ),
-                  _metric('Конфигурация', configurationMessage),
                   if (latencyMessage != null)
                     Text(
                       latencyMessage!,
@@ -867,7 +896,7 @@ class NonaControlScreen extends StatelessWidget {
             routingAvailable
                 ? 'Настроить маршруты →'
                 : 'Проверить доступность →',
-            1,
+            tab: 1,
           ),
           const SizedBox(width: 14),
           _quickBox(
@@ -875,10 +904,21 @@ class NonaControlScreen extends StatelessWidget {
             routingAvailable
                 ? 'Выбрать прямой маршрут →'
                 : 'Проверить доступность →',
-            1,
+            tab: 1,
           ),
           const SizedBox(width: 14),
-          _quickBox('Другой канал', 'Автоматический выбор →', 3),
+          _quickBox(
+            'Другой канал',
+            _connectionPreview,
+            onTap: nodeOptions.isEmpty
+                ? null
+                : () {
+                    if (!manualConnectionEnabled) {
+                      onManualConnectionChanged(true);
+                    }
+                    _openConnectionSettings(context);
+                  },
+          ),
         ],
       ),
     ],
@@ -911,9 +951,14 @@ class NonaControlScreen extends StatelessWidget {
     ),
   );
 
-  Widget _quickBox(String title, String subtitle, int tab) => Expanded(
+  Widget _quickBox(
+    String title,
+    String subtitle, {
+    int? tab,
+    VoidCallback? onTap,
+  }) => Expanded(
     child: InkWell(
-      onTap: () => onSelectTab(tab),
+      onTap: onTap ?? (tab == null ? null : () => onSelectTab(tab)),
       borderRadius: BorderRadius.circular(10),
       child: Container(
         padding: const EdgeInsets.all(16),
@@ -962,7 +1007,7 @@ class NonaControlScreen extends StatelessWidget {
           _Eyebrow(switch (selectedTab) {
             1 => 'Главная / Маршруты',
             2 => 'Главная / Аккаунт',
-            _ => 'Главная / Настройки',
+            _ => 'Главная / Аккаунт',
           }),
           const Spacer(),
           const NonaFace(size: 34),
@@ -976,19 +1021,29 @@ class NonaControlScreen extends StatelessWidget {
   Widget _detailContent(BuildContext context) => switch (selectedTab) {
     1 => _routesContent(context),
     2 => _accountContent(context),
-    _ => _settingsContent(context),
+    _ => _accountContent(context),
   };
 
   Widget _routesContent(BuildContext context) {
     final summary = routingSummary;
     Widget count(int? value, String label) => value == null
-        ? const _RouteDataLoading()
+        ? routingLoadFailed
+              ? const Text(
+                  'Не удалось загрузить. Потяните экран вниз для повтора.',
+                  style: TextStyle(color: NonaColor.coral, fontSize: 12),
+                )
+              : const _RouteDataLoading()
         : Text(
             '$value $label',
             style: const TextStyle(color: NonaColor.muted, fontSize: 12),
           );
-    Widget routeRow(String title, Widget detail, String category) => InkWell(
-      onTap: routingAvailable
+    Widget routeRow(
+      String title,
+      Widget detail,
+      String category, {
+      bool supported = true,
+    }) => InkWell(
+      onTap: routingAvailable && supported
           ? () => onOpenRouteCategory?.call(category)
           : null,
       child: Container(
@@ -1016,7 +1071,7 @@ class NonaControlScreen extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             OutlinedButton.icon(
-              onPressed: routingAvailable
+              onPressed: routingAvailable && supported
                   ? () => onOpenRouteCategory?.call(category)
                   : null,
               style: OutlinedButton.styleFrom(
@@ -1037,10 +1092,10 @@ class NonaControlScreen extends StatelessWidget {
       ),
     );
     final leftDetail = summary == null
-        ? const Column(
+        ? Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
+              const Text(
                 'Обычная сеть без VPN',
                 style: TextStyle(
                   color: NonaColor.muted,
@@ -1048,8 +1103,13 @@ class NonaControlScreen extends StatelessWidget {
                   height: 1.35,
                 ),
               ),
-              SizedBox(height: 5),
-              _RouteDataLoading(compact: true),
+              const SizedBox(height: 5),
+              routingLoadFailed
+                  ? const Text(
+                      'Не удалось загрузить маршруты',
+                      style: TextStyle(color: NonaColor.coral, fontSize: 11),
+                    )
+                  : const _RouteDataLoading(compact: true),
             ],
           )
         : Text(
@@ -1163,8 +1223,14 @@ class NonaControlScreen extends StatelessWidget {
         ),
         routeRow(
           'Российские приложения',
-          count(summary?.russianApps, 'приложений на устройстве'),
+          defaultTargetPlatform == TargetPlatform.android
+              ? count(summary?.russianApps, 'приложений на устройстве')
+              : const Text(
+                  'Маршруты приложений пока доступны только на Android',
+                  style: TextStyle(color: NonaColor.muted, fontSize: 12),
+                ),
           'russianApps',
+          supported: defaultTargetPlatform == TargetPlatform.android,
         ),
         routeRow(
           'Свои сайты',
@@ -1173,8 +1239,14 @@ class NonaControlScreen extends StatelessWidget {
         ),
         routeRow(
           'Приложения мимо VPN',
-          count(summary?.bypassedApps, 'приложений в списке'),
+          defaultTargetPlatform == TargetPlatform.android
+              ? count(summary?.bypassedApps, 'приложений в списке')
+              : const Text(
+                  'Маршруты приложений пока доступны только на Android',
+                  style: TextStyle(color: NonaColor.muted, fontSize: 12),
+                ),
           'apps',
+          supported: defaultTargetPlatform == TargetPlatform.android,
         ),
         const SizedBox(height: 14),
         const Text(
@@ -1268,30 +1340,6 @@ class NonaControlScreen extends StatelessWidget {
         const SizedBox(height: 20),
         const LinearProgressIndicator(),
       ],
-    ],
-  );
-
-  Widget _settingsContent(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const _Eyebrow('Устройство и данные'),
-      const SizedBox(height: 12),
-      const Text(
-        'Настройки',
-        style: TextStyle(
-          color: NonaColor.cream,
-          fontSize: 30,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -1,
-        ),
-      ),
-      const SizedBox(height: 14),
-      _detailRow('Конфигурация', configurationMessage),
-      const SizedBox(height: 18),
-      const Text(
-        'При подключении система запрашивает разрешение на VPN и показывает его состояние.',
-        style: TextStyle(color: NonaColor.muted, fontSize: 14, height: 1.5),
-      ),
     ],
   );
 

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'internet_routing.dart';
+
 /// Builds system-tunnel configurations for desktop builds.
 ///
 /// The server profile is generated and signature-checked by the existing
@@ -8,9 +10,13 @@ import 'dart:convert';
 class DesktopEngineProfile {
   const DesktopEngineProfile._();
 
-  static String windowsTun(String proxyConfigJson) {
+  static String windowsTun(
+    String proxyConfigJson, {
+    InternetRoutingState? routing,
+  }) {
     return _tun(
       proxyConfigJson,
+      routing: routing,
       settings: {
         'name': 'Nona',
         'desc': 'Nona VPN',
@@ -24,13 +30,18 @@ class DesktopEngineProfile {
     );
   }
 
-  static String macOsTun(String proxyConfigJson, {required String tunName}) {
+  static String macOsTun(
+    String proxyConfigJson, {
+    required String tunName,
+    InternetRoutingState? routing,
+  }) {
     if (!RegExp(r'^utun(?:[1-9]|[1-9][0-9]{1,2}|10[0-1][0-9]|102[0-4])$')
         .hasMatch(tunName)) {
       throw const FormatException('Invalid macOS tunnel interface name');
     }
     return _tun(
       proxyConfigJson,
+      routing: routing,
       settings: {
         'name': tunName,
         'mtu': 1400,
@@ -44,6 +55,7 @@ class DesktopEngineProfile {
   static String _tun(
     String proxyConfigJson, {
     required Map<String, Object?> settings,
+    InternetRoutingState? routing,
   }) {
     final decoded = jsonDecode(proxyConfigJson);
     if (decoded is! Map<String, dynamic> ||
@@ -58,6 +70,21 @@ class DesktopEngineProfile {
     }).toList();
     if (outbounds.any((outbound) => outbound['tag'] != 'proxy')) {
       throw const FormatException('Unexpected desktop outbound');
+    }
+
+    final directDomains = <String>{};
+    final proxyDomains = <String>{};
+    if (routing != null) {
+      final policy = routing.policy;
+      for (final site in routing.sites) {
+        final rule = 'domain:${site.domain}';
+        if (policy.directSite(site)) {
+          directDomains.add(rule);
+        } else if (policy.siteOverrides[site.domain] == false) {
+          proxyDomains.add(rule);
+        }
+      }
+      directDomains.addAll(policy.customSites.map((site) => 'domain:$site'));
     }
 
     return jsonEncode({
@@ -81,6 +108,18 @@ class DesktopEngineProfile {
       'routing': {
         'domainStrategy': 'AsIs',
         'rules': [
+          if (proxyDomains.isNotEmpty)
+            {
+              'type': 'field',
+              'domain': proxyDomains.toList(),
+              'outboundTag': 'proxy',
+            },
+          if (directDomains.isNotEmpty)
+            {
+              'type': 'field',
+              'domain': directDomains.toList(),
+              'outboundTag': 'direct',
+            },
           {
             'type': 'field',
             'ip': [
