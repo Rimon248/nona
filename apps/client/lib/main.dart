@@ -10,6 +10,8 @@ import 'package:oidc_default_store/oidc_default_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:desktop_webview_window/desktop_webview_window.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'connection_selection.dart';
 import 'instant_page_route.dart';
@@ -64,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
   );
   http.Client? _http;
   OidcUserManager? _oidc;
+  Webview? _authenticationWindow;
   AuthClient? _auth;
   ConfigurationVault? _vault;
   final AndroidVpnControl _androidVpn = AndroidVpnControl();
@@ -134,9 +137,22 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         settings: OidcUserManagerSettings(
           scope: const ['openid', 'profile', 'email'],
-          redirectUri: defaultTargetPlatform == TargetPlatform.windows
+          redirectUri:
+              defaultTargetPlatform == TargetPlatform.windows ||
+                  defaultTargetPlatform == TargetPlatform.macOS
               ? Uri.parse('http://127.0.0.1:0')
               : Uri.parse('ru.basketref.nona://oauth2redirect'),
+          options: OidcPlatformSpecificOptions(
+            windows: OidcPlatformSpecificOptions_Native(
+              launchUrl: _openAuthenticationWindow,
+              flowTimeoutSeconds: 180,
+            ),
+            macos: OidcNativeOptionsApple(
+              navigationMode: OidcAppleNavigationMode.loopbackSystemBrowser,
+              launchUrl: _openAuthenticationWindow,
+              flowTimeoutSeconds: 180,
+            ),
+          ),
         ),
       );
       _http = http.Client();
@@ -184,12 +200,50 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _updateTimer?.cancel();
+    unawaited(_closeAuthenticationWindow());
     if (defaultTargetPlatform == TargetPlatform.windows) {
       _trayChannel.setMethodCallHandler(null);
     }
     _oidc?.dispose();
     _http?.close();
     super.dispose();
+  }
+
+  Future<bool> _openAuthenticationWindow(Uri uri) async {
+    if (uri.scheme != 'https' || uri.host != Uri.parse(_oidcIssuer).host) {
+      throw const FormatException('Unexpected authentication address');
+    }
+    await _closeAuthenticationWindow();
+    final support = await getApplicationSupportDirectory();
+    final browser = await WebviewWindow.create(
+      configuration: CreateConfiguration(
+        title: 'Войти через Нону',
+        windowWidth: 880,
+        windowHeight: 720,
+        windows: WindowsWebviewOptions(
+          userDataFolder:
+              '${support.path}${Platform.pathSeparator}NonaWebView2',
+        ),
+      ),
+    );
+    _authenticationWindow = browser;
+    browser.onClose.then((_) {
+      if (identical(_authenticationWindow, browser)) {
+        _authenticationWindow = null;
+      }
+    });
+    await browser.launch(uri.toString());
+    return true;
+  }
+
+  Future<void> _closeAuthenticationWindow() async {
+    final browser = _authenticationWindow;
+    _authenticationWindow = null;
+    if (browser != null) {
+      try {
+        await browser.close();
+      } catch (_) {}
+    }
   }
 
   Future<void> _handleTrayCall(MethodCall call) async {
@@ -779,16 +833,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (error) {
       if (mounted) {
-        final category = error is PlatformException
-            ? 'ошибка macOS ${error.code}'
-            : error.runtimeType.toString();
         setState(
-          () => _message = defaultTargetPlatform == TargetPlatform.macOS
-              ? 'Не удалось завершить вход ($category)'
-              : 'Сервер аккаунтов недоступен',
+          () => _message =
+              error is PlatformException && error.code == 'create_failed'
+              ? 'Не удалось открыть окно входа. На Windows проверьте WebView2 Runtime.'
+              : 'Не удалось завершить вход: ${error.runtimeType}',
         );
       }
     } finally {
+      await _closeAuthenticationWindow();
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -838,7 +891,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!mounted || _message != message) return;
         final width = MediaQuery.sizeOf(context).width;
         final mobile = width < 1080;
-        final horizontal = mobile ? 16.0 : (width - 480) / 2;
+        final horizontal = mobile ? 16.0 : (width - 720).clamp(32.0, width) / 2;
         final bottom = mobile
             ? MediaQuery.viewPaddingOf(context).bottom +
                   (_selectedTab == 0 ? 146 : 78)
@@ -847,13 +900,17 @@ class _HomeScreenState extends State<HomeScreen> {
         messenger.removeCurrentSnackBar();
         messenger.showSnackBar(
           SnackBar(
-            content: Text(message),
+            content: Text(
+              message,
+              softWrap: true,
+              style: const TextStyle(color: NonaColor.cream, fontSize: 14),
+            ),
             behavior: SnackBarBehavior.floating,
             margin: EdgeInsets.fromLTRB(horizontal, 0, horizontal, bottom),
             backgroundColor: NonaColor.raised,
             showCloseIcon: true,
             closeIconColor: NonaColor.cream,
-            duration: const Duration(seconds: 8),
+            duration: const Duration(seconds: 12),
           ),
         );
       });

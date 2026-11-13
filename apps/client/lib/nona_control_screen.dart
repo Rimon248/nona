@@ -709,7 +709,9 @@ class NonaControlScreen extends StatelessWidget {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(46, 36, 46, 32),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1180),
+                constraints: BoxConstraints(
+                  minHeight: MediaQuery.sizeOf(context).height - 68,
+                ),
                 child: selectedTab == 0
                     ? _desktopStatus(context)
                     : _desktopDetail(context),
@@ -776,6 +778,7 @@ class NonaControlScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
+            flex: 2,
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 25),
               decoration: const BoxDecoration(
@@ -823,8 +826,7 @@ class NonaControlScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 34),
-          SizedBox(
-            width: 280,
+          Expanded(
             child: Container(
               padding: const EdgeInsets.only(left: 30),
               decoration: const BoxDecoration(
@@ -898,8 +900,7 @@ class NonaControlScreen extends StatelessWidget {
         const SizedBox(height: 5),
         Text(
           value,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+          softWrap: true,
           style: TextStyle(
             color: warm ? const Color(0xFFF3D2A0) : NonaColor.cream,
             fontSize: 18,
@@ -934,8 +935,7 @@ class NonaControlScreen extends StatelessWidget {
             const SizedBox(height: 7),
             Text(
               subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              softWrap: true,
               style: const TextStyle(color: NonaColor.muted, fontSize: 12),
             ),
           ],
@@ -969,10 +969,7 @@ class NonaControlScreen extends StatelessWidget {
         ],
       ),
       const SizedBox(height: 18),
-      ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 700),
-        child: _detailContent(context),
-      ),
+      SizedBox(width: double.infinity, child: _detailContent(context)),
     ],
   );
 

@@ -275,6 +275,9 @@ final class MacOSVpnControl: NSObject {
       .trimmingCharacters(in: .whitespacesAndNewlines), !interface.isEmpty else {
       throw MacOSVpnException.noNetworkServices
     }
+    if interface.hasPrefix("utun") {
+      throw MacOSVpnException.otherVpnActive
+    }
     let listing = try runCommand("/usr/sbin/networksetup", ["-listnetworkserviceorder"])
     let lines = listing.components(separatedBy: .newlines)
     guard let index = lines.firstIndex(where: { $0.contains("Device: \(interface))") }), index > 0 else {
@@ -348,7 +351,8 @@ final class MacOSVpnControl: NSObject {
       return try runCommand("/usr/bin/osascript", ["-e", script])
     } catch let error as CommandFailure {
       if error.output.contains("(-128)") { throw MacOSVpnException.cancelled }
-      throw MacOSVpnException.commandFailed
+      let reason = error.output.trimmingCharacters(in: .whitespacesAndNewlines)
+      throw MacOSVpnException.commandFailed(String(reason.prefix(240)))
     }
   }
 
@@ -386,18 +390,21 @@ private struct CommandFailure: Error {
 private enum MacOSVpnException: Error, Equatable {
   case invalidRequest
   case noNetworkServices
+  case otherVpnActive
   case noTunnelInterface
   case startupFailed
-  case commandFailed
+  case commandFailed(String)
   case cancelled
 
   var userMessage: String {
     switch self {
     case .invalidRequest: return "Не удалось подготовить профиль для macOS"
     case .noNetworkServices: return "Не найдены активные сетевые службы macOS"
+    case .otherVpnActive: return "Сейчас активен другой VPN. Отключите его и повторите подключение Ноны."
     case .noTunnelInterface: return "Не удалось выбрать интерфейс VPN"
     case .startupFailed: return "Не удалось запустить системный туннель Xray"
-    case .commandFailed: return "Системная команда VPN завершилась с ошибкой или была отменена"
+    case .commandFailed(let reason):
+      return reason.isEmpty ? "macOS не выполнила системную команду VPN" : "macOS не выполнила команду VPN: \(reason)"
     case .cancelled: return "Подключение отменено в системном запросе"
     }
   }
