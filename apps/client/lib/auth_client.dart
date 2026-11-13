@@ -369,6 +369,7 @@ class AuthClient {
       'GET',
       '/v1/devices',
     );
+    if (listStatus == 401) throw const AuthException('Sign in required');
     if (listStatus != 200) {
       throw const AuthException('Could not load devices');
     }
@@ -403,7 +404,14 @@ class AuthClient {
       '/v1/devices',
       body: {'label': label, 'public_key': public},
     );
-    if (status == 409) throw const AuthException('Device limit or duplicate');
+    if (status == 409) {
+      throw AuthException(switch (responseBody.trim()) {
+        'device limit reached' => 'Device limit reached',
+        'device key already registered' => 'Device key already registered',
+        _ => 'Device limit or duplicate',
+      });
+    }
+    if (status == 401) throw const AuthException('Sign in required');
     if (status != 201) throw const AuthException('Could not register device');
     try {
       final device = jsonDecode(responseBody);

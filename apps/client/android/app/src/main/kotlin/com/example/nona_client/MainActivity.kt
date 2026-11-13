@@ -5,26 +5,46 @@ import android.net.VpnService
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterFragmentActivity() {
     private val vpnPermissionRequestCode = 50773
     private var vpnPermissionResult: MethodChannel.Result? = null
+    private val routingExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "nona-routing-loader")
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nona.app_routing")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "getState" -> result.success(
-                        mapOf(
-                            "ownPackage" to packageName,
-                            "directPackages" to InternetRouting.directPackages(this),
-                            "apps" to InternetRouting.visibleApps(this),
-                            "policy" to InternetRouting.read(this).asMap(),
-                            "siteCatalogue" to InternetRouting.siteCatalogue(),
-                            "appCatalogue" to InternetRouting.appCatalogue(),
-                        ),
-                    )
+                    "getState" -> routingExecutor.execute {
+                        try {
+                            val context = applicationContext
+                            val apps = InternetRouting.visibleApps(context)
+                            val state = mapOf(
+                                "ownPackage" to packageName,
+                                "directPackages" to InternetRouting.directPackages(
+                                    context,
+                                    apps.mapNotNull { it["packageName"] },
+                                ),
+                                "apps" to apps,
+                                "policy" to InternetRouting.read(context).asMap(),
+                                "siteCatalogue" to InternetRouting.siteCatalogue(),
+                                "appCatalogue" to InternetRouting.appCatalogue(),
+                            )
+                            runOnUiThread { result.success(state) }
+                        } catch (_: Exception) {
+                            runOnUiThread {
+                                result.error(
+                                    "ROUTING_LOAD_FAILED",
+                                    "Could not load routing data",
+                                    null,
+                                )
+                            }
+                        }
+                    }
                     "saveInternetPolicy" -> {
                         val raw = call.arguments as? Map<*, *>
                         if (raw == null) result.error("BAD_POLICY", "Routing policy is invalid", null)

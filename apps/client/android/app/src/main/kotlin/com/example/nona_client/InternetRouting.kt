@@ -193,12 +193,19 @@ internal object InternetRouting {
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it["label"] ?: "" })
     }
 
-    fun directPackages(context: Context): List<String> {
+    fun directPackages(context: Context): List<String> =
+        directPackagesForInstalled(context, null)
+
+    fun directPackages(context: Context, installedPackages: Collection<String>): List<String> =
+        directPackagesForInstalled(context, installedPackages.toSet())
+
+    private fun directPackagesForInstalled(context: Context, installedPackages: Set<String>?): List<String> {
         val policy = read(context)
         val catalogue = apps.associateBy { it.id }
         // Only pass installed packages to VpnService.Builder. Stale saved rules
         // for apps the user removed can make addDisallowedApplication fail.
-        val candidates = visibleApps(context).mapNotNull { it["packageName"] }.toSet()
+        val candidates = installedPackages
+            ?: visibleApps(context).mapNotNull { it["packageName"] }.toSet()
         return candidates.filter { id ->
             policy.appOverrides[id] ?: when (policy.appsMode) {
                 "all" -> id.startsWith("ru.") || catalogue.containsKey(id)

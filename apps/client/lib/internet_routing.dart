@@ -168,10 +168,30 @@ class InternetRoutingState {
 
 class InternetRoutingClient {
   InternetRoutingClient([MethodChannel? channel])
-    : _channel = channel ?? const MethodChannel('nona.app_routing');
-  final MethodChannel _channel;
+    : _channel = channel ?? const MethodChannel('nona.app_routing'),
+      _shareLoads = channel == null;
 
-  Future<InternetRoutingState> load() async {
+  static Future<InternetRoutingState>? _pendingDefaultLoad;
+
+  final MethodChannel _channel;
+  final bool _shareLoads;
+
+  Future<InternetRoutingState> load() {
+    if (!_shareLoads) return _loadFromChannel();
+    final pending = _pendingDefaultLoad;
+    if (pending != null) return pending;
+
+    late final Future<InternetRoutingState> request;
+    request = _loadFromChannel().whenComplete(() {
+      if (identical(_pendingDefaultLoad, request)) {
+        _pendingDefaultLoad = null;
+      }
+    });
+    _pendingDefaultLoad = request;
+    return request;
+  }
+
+  Future<InternetRoutingState> _loadFromChannel() async {
     final raw = await _channel.invokeMethod<Map<Object?, Object?>>('getState');
     if (raw == null ||
         raw['apps'] is! List ||
