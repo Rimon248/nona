@@ -112,7 +112,9 @@ class NonaControlScreen extends StatelessWidget {
 
   String get _channel {
     if (!_connected) return 'Канал не выбран';
-    return country ?? 'Страна не указана';
+    return country == null
+        ? 'Страна не указана'
+        : '${flagForCountry(country!)} $country';
   }
 
   String get _connectionPreview {

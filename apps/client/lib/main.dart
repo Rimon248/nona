@@ -258,11 +258,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _handleTrayCall(MethodCall call) async {
     if (call.method != 'requestExit') return;
-    if (_vpnState != 'idle') await _disconnectVpn();
-    if (_vpnState == 'idle') {
+    try {
+      if (await _windowsVpn.status() == 'connected') {
+        await _windowsVpn.stop();
+      }
+    } catch (_) {
+      // The Xray runtime lives in this process; Windows closes it when the
+      // application exits even if its normal stop request failed.
+    } finally {
       await _trayChannel.invokeMethod<void>('exitNow');
-    } else {
-      await _trayChannel.invokeMethod<void>('cancelExit');
     }
   }
 

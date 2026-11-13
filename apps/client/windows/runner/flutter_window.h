@@ -37,6 +37,7 @@ class FlutterWindow : public Win32Window {
   HWND tray_window_ = nullptr;
   bool tray_icon_added_ = false;
   bool exit_requested_ = false;
+  bool exit_in_progress_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

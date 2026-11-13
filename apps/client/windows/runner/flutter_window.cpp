@@ -49,6 +49,7 @@ bool FlutterWindow::OnCreate() {
           result->Success();
         } else if (call.method_name() == "cancelExit") {
           exit_requested_ = false;
+          exit_in_progress_ = false;
           Show();
           result->Success();
         } else {
@@ -85,7 +86,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
   if (message == WM_CLOSE && !exit_requested_) {
-    ShowWindow(hwnd, SW_HIDE);
+    if (!exit_in_progress_ && tray_channel_) {
+      exit_in_progress_ = true;
+      tray_channel_->InvokeMethod(
+          "requestExit", std::make_unique<flutter::EncodableValue>());
+    }
     return 0;
   }
   if (message == kTrayMessage) {

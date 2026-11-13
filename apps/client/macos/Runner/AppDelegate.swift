@@ -47,6 +47,8 @@ final class MacOSVpnControl: NSObject {
   private let fileManager = FileManager.default
   private let dnsAddress = "1.1.1.1"
   private let dnsAddressV6 = "2606:4700:4700::1111"
+  private let launchdLabel = "com.nona.vpn.tunnel"
+  private let launchdPlistPath = "/Library/LaunchDaemons/com.nona.vpn.tunnel.plist"
   private let workQueue = DispatchQueue(label: "nona.macos_vpn", qos: .userInitiated)
   private var methodChannel: FlutterMethodChannel?
 
@@ -185,10 +187,10 @@ final class MacOSVpnControl: NSObject {
 
   private func stopAndRestore(_ state: NonaTunnelState) throws {
     var commands: [String] = ["set -e"]
+    commands.append("/bin/launchctl bootout system/\(launchdLabel) >/dev/null 2>&1 || true")
+    commands.append("/bin/rm -f \(shellQuote(launchdPlistPath))")
     if state.pid > 0 && processIsXray(state.pid) {
-      commands.append("/bin/kill -INT \(state.pid) 2>/dev/null || true")
-      commands.append("i=0; while /bin/kill -0 \(state.pid) 2>/dev/null && [ $i -lt 20 ]; do /bin/sleep 0.25; i=$((i+1)); done")
-      commands.append("if /bin/kill -0 \(state.pid) 2>/dev/null; then /bin/kill -TERM \(state.pid) 2>/dev/null || true; fi")
+      commands.append("/bin/kill -TERM \(state.pid) 2>/dev/null || true")
     }
     commands.append(contentsOf: dnsRestoreCommands(state.dns))
     _ = try runAsAdministrator(commands.joined(separator: "\n"))
@@ -205,12 +207,22 @@ final class MacOSVpnControl: NSObject {
   }
 
   private func launchXray(config: URL, interface: String, dns: [NonaDNSState]) throws -> Int32 {
-    let executable = shellQuote(engineURL().path)
-    let configPath = shellQuote(config.path)
     let logPath = shellQuote(startupLogURL.path)
+    let plistPath = shellQuote(launchdPlistPath)
+    let plist: [String: Any] = [
+      "Label": launchdLabel,
+      "ProgramArguments": [engineURL().path, "run", "-config", config.path],
+      "RunAtLoad": true,
+      "KeepAlive": false,
+      "StandardOutPath": startupLogURL.path,
+      "StandardErrorPath": startupLogURL.path,
+    ]
+    let plistData = try PropertyListSerialization.data(
+      fromPropertyList: plist, format: .xml, options: 0)
+    let encodedPlist = plistData.base64EncodedString()
     var commands = ["set -e"]
     commands.append("rollback_dns() {\n\(dnsRestoreCommands(dns).joined(separator: "\n"))\n}")
-    commands.append("rollback() { if [ -n \"${pid:-}\" ]; then /bin/kill -TERM \"$pid\" 2>/dev/null || true; fi; rollback_dns; }")
+    commands.append("rollback() { /bin/launchctl bootout system/\(launchdLabel) >/dev/null 2>&1 || true; /bin/rm -f \(plistPath); rollback_dns; }")
     commands.append("trap rollback EXIT")
     for record in dns {
       commands.append(
@@ -218,13 +230,17 @@ final class MacOSVpnControl: NSObject {
       )
     }
     commands.append(": > \(logPath); /bin/chmod 600 \(logPath)")
-    // AppleScript runs without a controlling terminal. macOS `nohup` tries to
-    // detach from one and exits before Xray starts; redirected background I/O
-    // is sufficient for this non-interactive shell.
-    commands.append("\(executable) run -config \(configPath) >\(logPath) 2>&1 </dev/null &")
-    commands.append("pid=$!")
-    commands.append("i=0; while [ $i -lt 32 ]; do if /sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1; then break; fi; if ! /bin/kill -0 $pid 2>/dev/null; then echo 'Xray завершился до создания системного туннеля. Подробности сохранены в закрытом журнале Ноны.' >&2; exit 1; fi; /bin/sleep 0.25; i=$((i+1)); done")
+    // launchd owns Xray after AppleScript exits. A shell background job would
+    // otherwise be terminated together with `do shell script`.
+    commands.append("/bin/launchctl bootout system/\(launchdLabel) >/dev/null 2>&1 || true")
+    commands.append("/bin/rm -f \(plistPath)")
+    commands.append("/bin/printf '%s' \(shellQuote(encodedPlist)) | /usr/bin/base64 -D > \(plistPath)")
+    commands.append("/usr/sbin/chown root:wheel \(plistPath); /bin/chmod 644 \(plistPath)")
+    commands.append("/bin/launchctl bootstrap system \(plistPath)")
+    commands.append("pid_for_job() { /bin/launchctl print system/\(launchdLabel) 2>/dev/null | /usr/bin/awk '$1 == \"pid\" && $2 == \"=\" { print $3; exit }'; }")
+    commands.append("i=0; while [ $i -lt 32 ]; do pid=$(pid_for_job); if [ -n \"$pid\" ] && /sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1; then break; fi; /bin/sleep 0.25; i=$((i+1)); done")
     commands.append("/sbin/ifconfig \(shellQuote(interface)) >/dev/null 2>&1 || { echo 'Xray не создал системный туннель за 8 секунд. Подробности сохранены в закрытом журнале Ноны.' >&2; exit 1; }")
+    commands.append("pid=$(pid_for_job); [ -n \"$pid\" ] || { echo 'Системная служба Xray завершилась. Подробности сохранены в закрытом журнале Ноны.' >&2; exit 1; }")
     commands.append("trap - EXIT")
     commands.append("printf '%s\\n' \"$pid\"")
     let output = try runAsAdministrator(commands.joined(separator: "\n"))
