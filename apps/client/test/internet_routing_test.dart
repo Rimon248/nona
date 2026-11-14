@@ -71,6 +71,10 @@ void main() {
     expect(normalizeCustomSite('https://www.example.ru/path'), 'example.ru');
     expect(normalizeCustomSite('example.com'), 'example.com');
     expect(
+      normalizeCustomSite('https://www.пример.рф/path'),
+      'xn--e1afmkfd.xn--p1ai',
+    );
+    expect(
       () => normalizeCustomSite('http://example.ru'),
       throwsFormatException,
     );
@@ -79,5 +83,6 @@ void main() {
       throwsFormatException,
     );
     expect(() => normalizeCustomSite('192.168.1.1'), throwsFormatException);
+    expect(() => normalizeCustomSite('example.ru:8443'), throwsFormatException);
   });
 }

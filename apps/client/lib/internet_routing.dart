@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:punycoder/punycoder.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'android_app_routing.dart';
@@ -394,11 +395,12 @@ String normalizeCustomSite(String input) {
       uri.scheme != 'https' ||
       uri.userInfo.isNotEmpty ||
       uri.host.isEmpty ||
-      uri.host.contains(':')) {
+      uri.hasPort) {
     throw const FormatException('Нужен домен или HTTPS-адрес');
   }
-  var host = uri.host.toLowerCase();
+  var host = Uri.decodeComponent(uri.host).toLowerCase();
   if (host.startsWith('www.')) host = host.substring(4);
+  host = domainToAscii(host.replaceFirst(RegExp(r'\.$'), '')).toLowerCase();
   if (!RegExp(r'^[a-z0-9-]+(\.[a-z0-9-]+)+$').hasMatch(host) ||
       host.length > 253 ||
       host

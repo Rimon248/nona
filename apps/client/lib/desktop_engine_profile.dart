@@ -21,10 +21,10 @@ class DesktopEngineProfile {
       settings: {
         'name': 'Nona',
         'desc': 'Nona VPN',
-        'mtu': 1400,
-        'gateway': ['10.0.0.1/30', 'fd00::1/126'],
-        'dns': ['1.1.1.1', '2606:4700:4700::1111'],
-        'autoSystemRoutingTable': ['0.0.0.0/0', '::/0'],
+        'mtu': 1280,
+        'gateway': ['10.0.0.1/30'],
+        'dns': ['1.1.1.1'],
+        'autoSystemRoutingTable': ['0.0.0.0/0'],
         'autoOutboundsInterface': 'auto',
         'autoSystemWfpBlockLeak': ['dns', 'misconfigtun'],
       },
@@ -74,7 +74,8 @@ class DesktopEngineProfile {
       throw const FormatException('Unexpected desktop outbound');
     }
 
-    final directDomains = <String>{};
+    final customDomains = <String>{};
+    final automaticDomains = <String>{};
     final proxyDomains = <String>{};
     final directProcesses = <String>{};
     if (routing != null) {
@@ -97,13 +98,15 @@ class DesktopEngineProfile {
       for (final site in routing.sites) {
         final rule = 'domain:${site.domain}';
         if (policy.directSite(site)) {
-          directDomains.add(rule);
+          automaticDomains.add(rule);
         } else if (policy.siteOverrides[site.domain] == false) {
           proxyDomains.add(rule);
         }
       }
-      directDomains.addAll(policy.customSites.map((site) => 'domain:$site'));
+      customDomains.addAll(policy.customSites.map((site) => 'domain:$site'));
     }
+    final directDomains = {...customDomains, ...automaticDomains};
+    final useFakeDns = includeWindowsProcesses && directDomains.isNotEmpty;
     final validProcesses = <String>{};
     for (final process in directProcesses) {
       try {
@@ -115,6 +118,23 @@ class DesktopEngineProfile {
 
     return jsonEncode({
       'log': {'loglevel': 'warning', 'access': 'none'},
+      if (useFakeDns)
+        'fakedns': [
+          {'ipPool': '198.19.0.0/16', 'poolSize': 65535},
+        ],
+      if (useFakeDns)
+        'dns': {
+          'queryStrategy': 'UseIPv4',
+          'servers': [
+            {
+              'address': 'fakedns',
+              'domains': directDomains.toList(),
+              'skipFallback': true,
+            },
+            '1.1.1.1',
+          ],
+          'disableFallbackIfMatch': true,
+        },
       'inbounds': [
         {
           'tag': 'nona-tun',
@@ -122,22 +142,37 @@ class DesktopEngineProfile {
           'settings': settings,
           'sniffing': {
             'enabled': true,
-            'destOverride': ['http', 'tls', 'quic'],
-            'routeOnly': true,
+            'destOverride': [if (useFakeDns) 'fakedns', 'http', 'tls', 'quic'],
+            'routeOnly': !useFakeDns,
           },
         },
       ],
       'outbounds': [
         ...outbounds,
         {'tag': 'direct', 'protocol': 'freedom'},
+        if (useFakeDns) {'tag': 'dns-out', 'protocol': 'dns'},
       ],
       'routing': {
         'domainStrategy': 'AsIs',
         'rules': [
+          if (useFakeDns)
+            {
+              'type': 'field',
+              'inboundTag': ['nona-tun'],
+              'port': '53',
+              'network': 'tcp,udp',
+              'outboundTag': 'dns-out',
+            },
           if (validProcesses.isNotEmpty)
             {
               'type': 'field',
               'process': validProcesses.toList(),
+              'outboundTag': 'direct',
+            },
+          if (customDomains.isNotEmpty)
+            {
+              'type': 'field',
+              'domain': customDomains.toList(),
               'outboundTag': 'direct',
             },
           if (proxyDomains.isNotEmpty)
@@ -146,10 +181,10 @@ class DesktopEngineProfile {
               'domain': proxyDomains.toList(),
               'outboundTag': 'proxy',
             },
-          if (directDomains.isNotEmpty)
+          if (automaticDomains.isNotEmpty)
             {
               'type': 'field',
-              'domain': directDomains.toList(),
+              'domain': automaticDomains.toList(),
               'outboundTag': 'direct',
             },
           {
