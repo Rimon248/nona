@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -12,7 +13,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
+import 'app_update.dart';
 import 'connection_selection.dart';
 import 'instant_page_route.dart';
 import 'internet_routing_screen.dart';
@@ -30,11 +33,26 @@ import 'vpn_action_policy.dart';
 import 'windows_vpn_control.dart';
 import 'nona_control_screen.dart';
 import 'nona_control_theme.dart';
+import 'nona_startup_screen.dart';
 
-void main() => runApp(const NonaApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  ui.Image? startupFigure;
+  try {
+    final bytes = await rootBundle.load('assets/brand/nona-full-body.png');
+    final codec = await ui.instantiateImageCodec(bytes.buffer.asUint8List());
+    startupFigure = (await codec.getNextFrame()).image;
+    codec.dispose();
+  } catch (_) {
+    // The rest of the application is still usable if an image is damaged.
+  }
+  runApp(NonaApp(startupFigure: startupFigure));
+}
 
 class NonaApp extends StatelessWidget {
-  const NonaApp({super.key});
+  const NonaApp({super.key, required this.startupFigure});
+
+  final ui.Image? startupFigure;
 
   @override
   Widget build(BuildContext context) {
@@ -42,13 +60,15 @@ class NonaApp extends StatelessWidget {
       title: 'Виртуальный Помощник Нона',
       debugShowCheckedModeBanner: false,
       theme: buildNonaControlTheme(),
-      home: const HomeScreen(),
+      home: HomeScreen(startupFigure: startupFigure),
     );
   }
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.startupFigure});
+
+  final ui.Image? startupFigure;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -98,6 +118,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _updateTimer;
   DateTime? _lastConfigurationCheck;
   String? _lastPresentedMessage;
+  bool _starting = true;
+  String _startupStatus = 'Проверяем вход и настройки';
 
   static const MethodChannel _trayChannel = MethodChannel('nona.tray');
 
@@ -118,7 +140,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _trayChannel.setMethodCallHandler(_handleTrayCall);
     }
     if (_vpnControlsAvailable) _refreshVpnState();
-    if (_apiBaseUrl.isEmpty) return;
+    if (_apiBaseUrl.isEmpty) {
+      unawaited(_beginStartup());
+      return;
+    }
     try {
       final issuer = Uri.parse(_oidcIssuer);
       if (issuer.scheme != 'https' ||
@@ -171,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } catch (_) {
       _message = 'Некорректный HTTPS-адрес входа';
+      unawaited(_beginStartup());
       return;
     }
     if (_configKeyId.isNotEmpty && _configVerifyKey.isNotEmpty) {
@@ -188,7 +214,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _configurationMessage = 'Неверный ключ проверки обновлений';
       }
     }
-    _restore();
+    unawaited(_beginStartup());
     _updateTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (_vpnState == 'other-vpn' && !_busy) {
         unawaited(_refreshVpnState());
@@ -283,6 +309,96 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _beginStartup() async {
+    final started = DateTime.now();
+    if (_auth != null) await _restore();
+    if (!mounted) return;
+    setState(() => _startupStatus = 'Проверяем обновления');
+
+    AppUpdate? update;
+    final client = http.Client();
+    try {
+      final package = await PackageInfo.fromPlatform();
+      update = await GitHubUpdateChecker(client).check(
+        installedVersion: package.version,
+        platform: defaultTargetPlatform,
+      );
+      if (update != null &&
+          await _preferences.getString('dismissed_update_tag') == update.tag) {
+        update = null;
+      }
+    } catch (_) {
+      // A GitHub outage must not prevent use of saved VPN configuration.
+    } finally {
+      client.close();
+    }
+    final remaining =
+        const Duration(milliseconds: 900) - DateTime.now().difference(started);
+    if (remaining > Duration.zero) await Future<void>.delayed(remaining);
+    if (!mounted) return;
+    if (update != null) await _offerAppUpdate(update);
+    if (mounted) setState(() => _starting = false);
+  }
+
+  Future<void> _offerAppUpdate(AppUpdate update) async {
+    final android = defaultTargetPlatform == TargetPlatform.android;
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Доступна Нона ${update.version}'),
+        content: Text(
+          android ? 'Скачать обновление и открыть системное окно установки?' : 'Для этой платформы опубликована новая версия. Откройте выпуск, чтобы установить её.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Позже'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(android ? 'Обновить' : 'Открыть выпуск'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (accepted != true) {
+      await _preferences.setString('dismissed_update_tag', update.tag);
+      return;
+    }
+    if (android) {
+      setState(() => _startupStatus = 'Скачиваем обновление');
+      try {
+        await AndroidAppInstaller().install(update);
+      } on PlatformException catch (error) {
+        _message = switch (error.code) {
+          'INSTALL_PERMISSION' => 'Разрешите Ноне установку обновлений в системных настройках и повторите попытку.',
+          'BAD_APK' => 'Скачанное обновление не прошло проверку.',
+          _ => 'Не удалось скачать или открыть обновление. Попробуйте позже.',
+        };
+      } catch (_) {
+        _message =
+            'Не удалось скачать или открыть обновление. Попробуйте позже.';
+      }
+    } else {
+      try {
+        if (Platform.isMacOS) {
+          await Process.start('open', [update.downloadUrl.toString()]);
+        } else if (Platform.isWindows) {
+          await Process.start('cmd', [
+            '/c',
+            'start',
+            '',
+            update.downloadUrl.toString(),
+          ]);
+        }
+      } catch (_) {
+        _message = 'Не удалось открыть страницу обновления';
+      }
     }
   }
 
@@ -936,6 +1052,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_starting) {
+      return NonaStartupScreen(
+        status: _startupStatus,
+        figure: widget.startupFigure,
+      );
+    }
     final message = _message;
     if (message == null) {
       _lastPresentedMessage = null;

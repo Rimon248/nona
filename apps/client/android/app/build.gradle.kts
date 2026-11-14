@@ -79,4 +79,5 @@ flutter {
 
 dependencies {
     implementation(files("libs/libXray.aar"))
+    implementation("androidx.core:core:1.15.0")
 }
