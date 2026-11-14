@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'connection_selection.dart';
+import 'country_flag.dart';
 import 'delayed_progress_indicator.dart';
 import 'routing_summary.dart';
 import 'nona_control_theme.dart';
@@ -112,9 +113,7 @@ class NonaControlScreen extends StatelessWidget {
 
   String get _channel {
     if (!_connected) return 'Канал не выбран';
-    return country == null
-        ? 'Страна не указана'
-        : '${flagForCountry(country!)} $country';
+    return country ?? 'Страна не указана';
   }
 
   String get _connectionPreview {
@@ -133,16 +132,14 @@ class NonaControlScreen extends StatelessWidget {
   Widget _connectionSettings(BuildContext context) {
     if (!manualConnectionEnabled) return const SizedBox.shrink();
     final selected = nodeOptions.where((item) => item.id == selectedNodeId);
-    final flag = selected.isEmpty
-        ? '🌐'
-        : flagForCountry(selected.first.country);
+    final selectedCountry = selected.isEmpty ? null : selected.first.country;
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
         onPressed: nodeOptions.isEmpty
             ? null
             : () => _openConnectionSettings(context),
-        icon: Text(flag, style: const TextStyle(fontSize: 20)),
+        icon: CountryFlag(country: selectedCountry),
         label: Text(
           'Подключение: $_connectionPreview',
           maxLines: 2,
@@ -172,12 +169,12 @@ class NonaControlScreen extends StatelessWidget {
           Widget option(
             String title,
             String? subtitle,
-            String leading,
+            Widget leading,
             bool chosen,
             VoidCallback select,
           ) => ListTile(
             minTileHeight: 52,
-            leading: Text(leading, style: const TextStyle(fontSize: 22)),
+            leading: leading,
             title: Text(title),
             subtitle: subtitle == null ? null : Text(subtitle),
             trailing: Icon(
@@ -223,7 +220,7 @@ class NonaControlScreen extends StatelessWidget {
                   option(
                     'Автоматически',
                     'Сначала доступный сервер',
-                    '🌐',
+                    const CountryFlag(country: null),
                     chosenNode == null,
                     () {
                       setSheetState(() => chosenNode = null);
@@ -234,7 +231,7 @@ class NonaControlScreen extends StatelessWidget {
                     option(
                       node.country,
                       null,
-                      flagForCountry(node.country),
+                      CountryFlag(country: node.country),
                       chosenNode == node.id,
                       () {
                         setSheetState(() {
@@ -254,7 +251,7 @@ class NonaControlScreen extends StatelessWidget {
                   option(
                     'Автоматически',
                     'Hysteria2, затем VLESS',
-                    '↗',
+                    const Icon(Icons.auto_awesome),
                     chosenTransport == PreferredTransport.automatic,
                     () {
                       setSheetState(
@@ -267,7 +264,7 @@ class NonaControlScreen extends StatelessWidget {
                     option(
                       'Hysteria2',
                       null,
-                      'H',
+                      const Text('H'),
                       chosenTransport == PreferredTransport.hysteria2,
                       () {
                         setSheetState(
@@ -280,7 +277,7 @@ class NonaControlScreen extends StatelessWidget {
                     option(
                       'VLESS',
                       null,
-                      'V',
+                      const Text('V'),
                       chosenTransport == PreferredTransport.vlessReality,
                       () {
                         setSheetState(
@@ -480,15 +477,25 @@ class NonaControlScreen extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 5),
-                        Text(
-                          _channel,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: NonaColor.cream,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        Row(
+                          children: [
+                            if (_connected && country != null) ...[
+                              CountryFlag(country: country, size: 20),
+                              const SizedBox(width: 7),
+                            ],
+                            Flexible(
+                              child: Text(
+                                _channel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: NonaColor.cream,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -882,7 +889,13 @@ class NonaControlScreen extends StatelessWidget {
                     _connectionSettings(context),
                     const SizedBox(height: 8),
                   ],
-                  _metric('Текущий канал', _channel),
+                  _metric(
+                    'Текущий канал',
+                    _channel,
+                    leading: _connected && country != null
+                        ? CountryFlag(country: country)
+                        : null,
+                  ),
                   _metric(
                     'Задержка HTTPS',
                     latencyMs == null ? '—' : '$latencyMs мс',
@@ -938,7 +951,12 @@ class NonaControlScreen extends StatelessWidget {
     ],
   );
 
-  Widget _metric(String label, String value, {bool warm = false}) => Container(
+  Widget _metric(
+    String label,
+    String value, {
+    bool warm = false,
+    Widget? leading,
+  }) => Container(
     width: double.infinity,
     padding: const EdgeInsets.symmetric(vertical: 16),
     decoration: const BoxDecoration(
@@ -952,14 +970,21 @@ class NonaControlScreen extends StatelessWidget {
           style: const TextStyle(color: NonaColor.muted, fontSize: 12),
         ),
         const SizedBox(height: 5),
-        Text(
-          value,
-          softWrap: true,
-          style: TextStyle(
-            color: warm ? const Color(0xFFF3D2A0) : NonaColor.cream,
-            fontSize: 18,
-            fontWeight: FontWeight.w500,
-          ),
+        Row(
+          children: [
+            if (leading != null) ...[leading, const SizedBox(width: 8)],
+            Flexible(
+              child: Text(
+                value,
+                softWrap: true,
+                style: TextStyle(
+                  color: warm ? const Color(0xFFF3D2A0) : NonaColor.cream,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     ),

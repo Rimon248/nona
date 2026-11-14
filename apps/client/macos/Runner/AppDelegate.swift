@@ -234,7 +234,7 @@ final class MacOSVpnControl: NSObject {
     // otherwise be terminated together with `do shell script`.
     commands.append("/bin/launchctl bootout system/\(launchdLabel) >/dev/null 2>&1 || true")
     commands.append("/bin/rm -f \(plistPath)")
-    commands.append("/bin/printf '%s' \(shellQuote(encodedPlist)) | /usr/bin/base64 -D > \(plistPath)")
+    commands.append("/usr/bin/printf '%s' \(shellQuote(encodedPlist)) | /usr/bin/base64 -D > \(plistPath)")
     commands.append("/usr/sbin/chown root:wheel \(plistPath); /bin/chmod 644 \(plistPath)")
     commands.append("/bin/launchctl bootstrap system \(plistPath)")
     commands.append("pid_for_job() { /bin/launchctl print system/\(launchdLabel) 2>/dev/null | /usr/bin/awk '$1 == \"pid\" && $2 == \"=\" { print $3; exit }'; }")
