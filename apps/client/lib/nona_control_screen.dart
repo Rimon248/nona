@@ -1353,7 +1353,7 @@ class NonaControlScreen extends StatelessWidget {
             'enabled' => 'Разрешён: повторный пароль администратора не требуется',
             'requiresApproval' => 'Ожидает разрешения в настройках macOS',
             'notRegistered' => 'Нужна однократная регистрация',
-            'signingRequired' => 'Нужна постоянная подпись приложения',
+            'signingRequired' => 'Сборка без подписи Apple: помощник недоступен',
             'unsupported' => 'Нужна macOS 13 или новее',
             'notFound' => 'Помощник отсутствует в этой сборке',
             'error' => 'Не удалось проверить состояние',
@@ -1369,6 +1369,16 @@ class NonaControlScreen extends StatelessWidget {
                   : macHelperState == 'notRegistered'
                   ? 'Подготовить помощник'
                   : 'Проверить снова'),
+            ),
+          if (macHelperState == 'notRegistered' ||
+              macHelperState == 'requiresApproval' ||
+              macHelperState == 'signingRequired')
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'На macOS 13+ сначала подготовьте и разрешите помощник. После этого VPN подключается и отключается без повторного пароля администратора.',
+                style: TextStyle(color: NonaColor.muted, fontSize: 13),
+              ),
             ),
         ],
         if (!deviceRegistered) ...[
