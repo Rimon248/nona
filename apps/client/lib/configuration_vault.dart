@@ -1,16 +1,22 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'config_bundle.dart';
 import 'credential_box.dart';
+import 'macos_compact_secure_storage.dart';
 import 'node_access.dart';
 
 abstract interface class SecureStringStore {
   Future<String?> read(String key);
   Future<void> write(String key, String value);
   Future<void> delete(String key);
+}
+
+class ProtectedStorageException implements Exception {
+  const ProtectedStorageException();
 }
 
 /// Uses the platform's protected app storage. Access by a future VPN process
@@ -20,22 +26,37 @@ class PlatformSecureStringStore implements SecureStringStore {
     : _storage =
           storage ??
           (Platform.isMacOS
-              ? const FlutterSecureStorage(
-                  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-                )
+              ? MacCompactSecureStorage()
               : const FlutterSecureStorage());
 
   final FlutterSecureStorage _storage;
 
   @override
-  Future<String?> read(String key) => _storage.read(key: key);
+  Future<String?> read(String key) async {
+    try {
+      return await _storage.read(key: key);
+    } on PlatformException {
+      throw const ProtectedStorageException();
+    }
+  }
 
   @override
-  Future<void> write(String key, String value) =>
-      _storage.write(key: key, value: value);
+  Future<void> write(String key, String value) async {
+    try {
+      await _storage.write(key: key, value: value);
+    } on PlatformException {
+      throw const ProtectedStorageException();
+    }
+  }
 
   @override
-  Future<void> delete(String key) => _storage.delete(key: key);
+  Future<void> delete(String key) async {
+    try {
+      await _storage.delete(key: key);
+    } on PlatformException {
+      throw const ProtectedStorageException();
+    }
+  }
 }
 
 /// Stores one device's verified update. Writing the version floor first means
@@ -43,23 +64,73 @@ class PlatformSecureStringStore implements SecureStringStore {
 class ConfigurationVault {
   ConfigurationVault(this._store, this._verifier);
 
+  static int _storageGeneration = 0;
+
   static const _bundleKey = 'nona.active_bundle.v1';
   static const _versionKey = 'nona.minimum_bundle_version.v1';
   static const _identityKey = 'nona.bundle_identity.v1';
 
   final SecureStringStore _store;
   final BundleVerifier _verifier;
+  bool _identityLoaded = false;
+  String? _savedIdentity;
+  bool _versionLoaded = false;
+  int? _savedVersion;
+  bool _bundleLoaded = false;
+  String? _savedEnvelope;
+  int _cacheGeneration = _storageGeneration;
+
+  void _ensureCurrentCache() {
+    if (_cacheGeneration == _storageGeneration) return;
+    _invalidateCache();
+    _cacheGeneration = _storageGeneration;
+  }
 
   String _identity(String accountId, String deviceId) =>
       jsonEncode([accountId, deviceId]);
 
+  Future<String?> _storedIdentity() async {
+    _ensureCurrentCache();
+    if (!_identityLoaded) {
+      _savedIdentity = await _store.read(_identityKey);
+      _identityLoaded = true;
+    }
+    return _savedIdentity;
+  }
+
+  Future<String?> _storedEnvelope() async {
+    _ensureCurrentCache();
+    if (!_bundleLoaded) {
+      _savedEnvelope = await _store.read(_bundleKey);
+      _bundleLoaded = true;
+    }
+    return _savedEnvelope;
+  }
+
+  void _invalidateCache() {
+    _identityLoaded = false;
+    _savedIdentity = null;
+    _versionLoaded = false;
+    _savedVersion = null;
+    _bundleLoaded = false;
+    _savedEnvelope = null;
+  }
+
   Future<int> _minimumVersion() async {
+    _ensureCurrentCache();
+    if (_versionLoaded) return _savedVersion!;
     final text = await _store.read(_versionKey);
-    if (text == null) return 0;
+    if (text == null) {
+      _savedVersion = 0;
+      _versionLoaded = true;
+      return 0;
+    }
     final value = int.tryParse(text);
     if (value == null || value < 0) {
       throw const BundleException('Invalid saved version floor');
     }
+    _savedVersion = value;
+    _versionLoaded = true;
     return value;
   }
 
@@ -70,7 +141,7 @@ class ConfigurationVault {
     required DateTime now,
   }) async {
     final identity = _identity(accountId, deviceId);
-    if (await _store.read(_identityKey) != identity) {
+    if (await _storedIdentity() != identity) {
       // A previous account's version floor and bundle must never affect this
       // account. This also drops unbound data from older client builds.
       await clear();
@@ -83,11 +154,27 @@ class ConfigurationVault {
       minimumVersion: floor,
       now: now,
     );
-    await _store.write(_identityKey, identity);
-    if (verified.version > floor) {
-      await _store.write(_versionKey, verified.version.toString());
+    if (await _storedEnvelope() == envelopeJson && floor >= verified.version) {
+      return verified;
     }
-    await _store.write(_bundleKey, envelopeJson);
+    _storageGeneration++;
+    _cacheGeneration = _storageGeneration;
+    try {
+      await _store.write(_identityKey, identity);
+      if (verified.version > floor) {
+        await _store.write(_versionKey, verified.version.toString());
+      }
+      await _store.write(_bundleKey, envelopeJson);
+    } catch (_) {
+      _invalidateCache();
+      rethrow;
+    }
+    _savedIdentity = identity;
+    _identityLoaded = true;
+    _savedVersion = verified.version > floor ? verified.version : floor;
+    _versionLoaded = true;
+    _savedEnvelope = envelopeJson;
+    _bundleLoaded = true;
     return verified;
   }
 
@@ -96,11 +183,11 @@ class ConfigurationVault {
     required String deviceId,
     required DateTime now,
   }) async {
-    if (await _store.read(_identityKey) != _identity(accountId, deviceId)) {
+    if (await _storedIdentity() != _identity(accountId, deviceId)) {
       return null;
     }
     final floor = await _minimumVersion();
-    final envelopeJson = await _store.read(_bundleKey);
+    final envelopeJson = await _storedEnvelope();
     if (envelopeJson == null) return null;
     return _verifier.verify(
       envelopeJson,
@@ -195,8 +282,17 @@ class ConfigurationVault {
   );
 
   Future<void> clear() async {
+    _storageGeneration++;
+    _cacheGeneration = _storageGeneration;
+    _invalidateCache();
     await _store.delete(_bundleKey);
     await _store.delete(_versionKey);
     await _store.delete(_identityKey);
+    _savedIdentity = null;
+    _identityLoaded = true;
+    _savedVersion = 0;
+    _versionLoaded = true;
+    _savedEnvelope = null;
+    _bundleLoaded = true;
   }
 }

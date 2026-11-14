@@ -1,18 +1,9 @@
 #include "flutter_window.h"
 
 #include <optional>
-#include <shellapi.h>
 #include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
-#include "resource.h"
-
-namespace {
-constexpr UINT kTrayMessage = WM_APP + 1;
-constexpr UINT kTrayOpenCommand = 41001;
-constexpr UINT kTrayExitCommand = 41002;
-constexpr wchar_t kTrayTooltip[] = L"Виртуальный Помощник Нона";
-}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -35,28 +26,28 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
-  tray_channel_ = std::make_unique<
+  window_channel_ = std::make_unique<
       flutter::MethodChannel<flutter::EncodableValue>>(
-      flutter_controller_->engine()->messenger(), "nona.tray",
+      flutter_controller_->engine()->messenger(), "nona.window",
       &flutter::StandardMethodCodec::GetInstance());
-  tray_channel_->SetMethodCallHandler(
+  window_channel_->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
                  result) {
         if (call.method_name() == "exitNow") {
           exit_requested_ = true;
+          close_requested_ = false;
           PostMessage(GetHandle(), WM_CLOSE, 0, 0);
           result->Success();
         } else if (call.method_name() == "cancelExit") {
           exit_requested_ = false;
-          exit_in_progress_ = false;
+          close_requested_ = false;
           Show();
           result->Success();
         } else {
           result->NotImplemented();
         }
       });
-  AddTrayIcon();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -72,8 +63,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  RemoveTrayIcon();
-  tray_channel_.reset();
+  window_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -86,33 +76,14 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
   if (message == WM_CLOSE && !exit_requested_) {
-    if (!exit_in_progress_ && tray_channel_) {
-      exit_in_progress_ = true;
-      tray_channel_->InvokeMethod(
+    if (close_requested_) return 0;
+    close_requested_ = true;
+    if (window_channel_) {
+      window_channel_->InvokeMethod(
           "requestExit", std::make_unique<flutter::EncodableValue>());
+      return 0;
     }
-    return 0;
-  }
-  if (message == kTrayMessage) {
-    if (lparam == WM_LBUTTONDBLCLK) {
-      Show();
-    } else if (lparam == WM_RBUTTONUP || lparam == WM_CONTEXTMENU) {
-      ShowTrayMenu();
-    }
-    return 0;
-  }
-  if (message == WM_COMMAND) {
-    switch (LOWORD(wparam)) {
-      case kTrayOpenCommand:
-        Show();
-        return 0;
-      case kTrayExitCommand:
-        if (tray_channel_) {
-          tray_channel_->InvokeMethod(
-              "requestExit", std::make_unique<flutter::EncodableValue>());
-        }
-        return 0;
-    }
+    close_requested_ = false;
   }
 
   // Give Flutter, including plugins, an opportunity to handle window messages.
@@ -132,45 +103,4 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
-}
-
-void FlutterWindow::AddTrayIcon() {
-  NOTIFYICONDATAW icon{};
-  icon.cbSize = sizeof(icon);
-  icon.hWnd = GetHandle();
-  tray_window_ = icon.hWnd;
-  icon.uID = 1;
-  icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-  icon.uCallbackMessage = kTrayMessage;
-  icon.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
-  wcscpy_s(icon.szTip, kTrayTooltip);
-  tray_icon_added_ = Shell_NotifyIconW(NIM_ADD, &icon) == TRUE;
-  if (tray_icon_added_) {
-    icon.uVersion = NOTIFYICON_VERSION_4;
-    Shell_NotifyIconW(NIM_SETVERSION, &icon);
-  }
-}
-
-void FlutterWindow::RemoveTrayIcon() {
-  if (!tray_icon_added_) return;
-  NOTIFYICONDATAW icon{};
-  icon.cbSize = sizeof(icon);
-  icon.hWnd = tray_window_;
-  icon.uID = 1;
-  Shell_NotifyIconW(NIM_DELETE, &icon);
-  tray_icon_added_ = false;
-  tray_window_ = nullptr;
-}
-
-void FlutterWindow::ShowTrayMenu() {
-  HMENU menu = CreatePopupMenu();
-  if (!menu) return;
-  AppendMenuW(menu, MF_STRING, kTrayOpenCommand, L"Открыть Нону");
-  AppendMenuW(menu, MF_STRING, kTrayExitCommand, L"Отключить VPN и выйти");
-  POINT cursor{};
-  GetCursorPos(&cursor);
-  SetForegroundWindow(GetHandle());
-  TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN,
-                 cursor.x, cursor.y, 0, GetHandle(), nullptr);
-  DestroyMenu(menu);
 }

@@ -15,3 +15,5 @@ flutter build macos --release \
   --dart-define=NONA_API_BASE_URL=https://nona.server.basketref.ru \
   --dart-define=NONA_CONFIG_KEY_ID=nona-config-2026-11 \
   "--dart-define=NONA_CONFIG_VERIFY_KEY_B64=$verify_key"
+"$client_dir/macos/embed-privileged-helper.sh" \
+  "$client_dir/build/macos/Build/Products/Release/Nona.app"

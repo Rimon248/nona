@@ -2,13 +2,18 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-/// Talks to the native macOS host, which asks for administrator permission
-/// before starting Xray TUN or changing system DNS settings.
+/// Talks to the native macOS host and its optional, user-approved system helper.
 class MacOSVpnControl {
   MacOSVpnControl._();
 
   static final MacOSVpnControl instance = MacOSVpnControl._();
   static const _channel = MethodChannel('nona.macos_vpn');
+
+  Future<String> helperStatus() async =>
+      await _channel.invokeMethod<String>('helperStatus') ?? 'notFound';
+
+  Future<String> installHelper() async =>
+      await _channel.invokeMethod<String>('installHelper') ?? 'notFound';
 
   Future<bool> connect(String configJson) async {
     final started = await _channel.invokeMethod<bool>('connect', {

@@ -278,8 +278,10 @@ class NonaVpnService : VpnService() {
                 .put("settings", JSONObject().put("name", "tun0").put("mtu", 1280))
             if (tunConfig.has("routing")) {
                 nativeInbound.put("sniffing", JSONObject().put("enabled", true)
-                    .put("destOverride", JSONArray(listOf("http", "tls", "quic")))
-                    .put("routeOnly", true))
+                    .put("destOverride", JSONArray(listOf("fakedns", "http", "tls", "quic")))
+                    // Fake IPs must be replaced by their original domain.
+                    // With routeOnly=true, Freedom would try to dial the fake IP.
+                    .put("routeOnly", false))
             }
             val nativeInbounds = JSONArray().put(nativeInbound)
             tunConfig.put("inbounds", nativeInbounds)

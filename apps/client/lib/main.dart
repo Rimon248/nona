@@ -23,12 +23,14 @@ import 'internet_routing.dart';
 import 'routing_summary.dart';
 import 'macos_vpn_control.dart';
 import 'android_vpn_control.dart';
+import 'ios_vpn_control.dart';
 import 'auth_client.dart';
 import 'config_bundle.dart';
 import 'configuration_sync.dart';
 import 'configuration_vault.dart';
 import 'desktop_engine_profile.dart';
 import 'engine_profiles.dart';
+import 'macos_compact_secure_storage.dart';
 import 'vpn_action_policy.dart';
 import 'windows_vpn_control.dart';
 import 'nona_control_screen.dart';
@@ -90,6 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
   AuthClient? _auth;
   ConfigurationVault? _vault;
   final AndroidVpnControl _androidVpn = AndroidVpnControl();
+  final IosVpnControl _iosVpn = IosVpnControl();
   final WindowsVpnControl _windowsVpn = WindowsVpnControl.instance;
   final MacOSVpnControl _macVpn = MacOSVpnControl.instance;
   String? _deviceId;
@@ -120,11 +123,14 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _lastPresentedMessage;
   bool _starting = true;
   String _startupStatus = 'Проверяем вход и настройки';
+  String _macHelperState = 'checking';
+  bool _installingMacHelper = false;
 
-  static const MethodChannel _trayChannel = MethodChannel('nona.tray');
+  static const MethodChannel _windowChannel = MethodChannel('nona.window');
 
   bool get _vpnControlsAvailable =>
       defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.windows ||
       defaultTargetPlatform == TargetPlatform.macOS;
 
@@ -136,14 +142,23 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      unawaited(_refreshMacHelperState());
+    }
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      _trayChannel.setMethodCallHandler(_handleTrayCall);
+      _windowChannel.setMethodCallHandler(_handleWindowCall);
     }
     if (_vpnControlsAvailable) _refreshVpnState();
     if (_apiBaseUrl.isEmpty) {
       unawaited(_beginStartup());
       return;
     }
+    final FlutterSecureStorage oidcSecureStorage = Platform.isMacOS
+        ? MacCompactSecureStorage()
+        : OidcDefaultStore.createHardenedSecureStorage();
+    final secureStringStore = PlatformSecureStringStore(
+      Platform.isMacOS ? oidcSecureStorage : null,
+    );
     try {
       final issuer = Uri.parse(_oidcIssuer);
       if (issuer.scheme != 'https' ||
@@ -160,13 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
         clientCredentials: const OidcClientAuthentication.none(
           clientId: 'nona-client',
         ),
-        store: OidcDefaultStore(
-          secureStorageInstance: Platform.isMacOS
-              ? const FlutterSecureStorage(
-                  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-                )
-              : OidcDefaultStore.createHardenedSecureStorage(),
-        ),
+        store: OidcDefaultStore(secureStorageInstance: oidcSecureStorage),
         settings: OidcUserManagerSettings(
           scope: const ['openid', 'profile', 'email'],
           redirectUri:
@@ -191,7 +200,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _auth = AuthClient(
         baseUri: Uri.parse(_apiBaseUrl),
         httpClient: _http!,
-        secureStore: PlatformSecureStringStore(),
+        secureStore: secureStringStore,
         oidcSession: KeycloakSession(_oidc!),
       );
     } catch (_) {
@@ -207,7 +216,7 @@ class _HomeScreenState extends State<HomeScreen> {
           throw const FormatException('Invalid configuration signing key');
         }
         _vault = ConfigurationVault(
-          PlatformSecureStringStore(),
+          secureStringStore,
           BundleVerifier({_configKeyId: key}),
         );
       } catch (_) {
@@ -238,7 +247,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _updateTimer?.cancel();
     unawaited(_closeAuthenticationWindow());
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      _trayChannel.setMethodCallHandler(null);
+      _windowChannel.setMethodCallHandler(null);
     }
     _oidc?.dispose();
     _http?.close();
@@ -282,17 +291,41 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _handleTrayCall(MethodCall call) async {
+  Future<void> _handleWindowCall(MethodCall call) async {
     if (call.method != 'requestExit') return;
+    while (_busy && mounted) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
     try {
-      if (await _windowsVpn.status() == 'connected') {
-        await _windowsVpn.stop();
-      }
+      _vpnState = await _vpnStatus();
     } catch (_) {
-      // The Xray runtime lives in this process; Windows closes it when the
-      // application exits even if its normal stop request failed.
+      _vpnState = 'error';
+    }
+    if (_vpnState != 'idle') await _disconnectVpn();
+    await _windowChannel.invokeMethod<void>(
+      _vpnState == 'idle' ? 'exitNow' : 'cancelExit',
+    );
+  }
+
+  Future<void> _refreshMacHelperState() async {
+    try {
+      final status = await _macVpn.helperStatus();
+      if (mounted) setState(() => _macHelperState = status);
+    } catch (_) {
+      if (mounted) setState(() => _macHelperState = 'error');
+    }
+  }
+
+  Future<void> _installMacHelper() async {
+    if (_installingMacHelper) return;
+    setState(() => _installingMacHelper = true);
+    try {
+      final status = await _macVpn.installHelper();
+      if (mounted) setState(() => _macHelperState = status);
+    } catch (_) {
+      if (mounted) setState(() => _macHelperState = 'error');
     } finally {
-      await _trayChannel.invokeMethod<void>('exitNow');
+      if (mounted) setState(() => _installingMacHelper = false);
     }
   }
 
@@ -809,6 +842,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (defaultTargetPlatform == TargetPlatform.android) {
       return await _androidVpn.connectHysteria(profile) ? true : null;
     }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return _iosVpn.connectHysteria(profile);
+    }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       return _windowsVpn.connect(
         DesktopEngineProfile.windowsTun(
@@ -832,6 +868,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<bool?> _startVless(VlessRealityProfile profile) async {
     if (defaultTargetPlatform == TargetPlatform.android) {
       return await _androidVpn.connect(profile) ? true : null;
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return _iosVpn.connect(profile);
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       return _windowsVpn.connect(
@@ -863,6 +902,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<String> _vpnStatus() => switch (defaultTargetPlatform) {
     TargetPlatform.android => _androidVpn.status(),
+    TargetPlatform.iOS => _iosVpn.status(),
     TargetPlatform.windows => _windowsVpn.status(),
     TargetPlatform.macOS => _macVpn.status(),
     _ => Future<String>.value('idle'),
@@ -870,6 +910,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _stopVpn() => switch (defaultTargetPlatform) {
     TargetPlatform.android => _androidVpn.stop(),
+    TargetPlatform.iOS => _iosVpn.stop(),
     TargetPlatform.windows => _windowsVpn.stop(),
     TargetPlatform.macOS => _macVpn.stop(),
     _ => Future<void>.value(),
@@ -877,6 +918,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<int> _measureVpn() => switch (defaultTargetPlatform) {
     TargetPlatform.android => _androidVpn.measureLatency(),
+    TargetPlatform.iOS => _iosVpn.measureLatency(),
     TargetPlatform.windows => _windowsVpn.measureLatency(),
     TargetPlatform.macOS => _macVpn.measureLatency(),
     _ => Future<int>.error(StateError('VPN control is unavailable')),
@@ -1213,6 +1255,15 @@ class _HomeScreenState extends State<HomeScreen> {
       username: _auth?.username,
       accessLabel: accessLabel,
       deviceRegistered: _deviceId != null,
+      macHelperState: defaultTargetPlatform == TargetPlatform.macOS
+          ? _macHelperState
+          : null,
+      onMacHelperAction: _installingMacHelper
+          ? null
+          : _macHelperState == 'notRegistered' ||
+                _macHelperState == 'requiresApproval'
+          ? _installMacHelper
+          : _refreshMacHelperState,
     );
   }
 }

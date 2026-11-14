@@ -229,7 +229,28 @@ internal object InternetRouting {
         val direct = (custom + automatic).distinct()
         if (direct.isEmpty()) return profile
         profile.getJSONArray("outbounds").put(JSONObject().put("tag", "direct").put("protocol", "freedom"))
+        profile.getJSONArray("outbounds").put(JSONObject().put("tag", "dns-out").put("protocol", "dns"))
+        // TUN normally receives an IP after Android has resolved the hostname.
+        // TLS/HTTP sniffing cannot recover it for ECH, cached DNS, or non-HTTP
+        // traffic. Give only selected direct domains a FakeDNS address so the
+        // TUN inbound can recover the original name before applying rules.
+        // Keep the pool away from the VPN interface address 198.18.0.2/30.
+        profile.put("fakedns", JSONArray()
+            .put(JSONObject().put("ipPool", "198.19.0.0/16").put("poolSize", 65535))
+            .put(JSONObject().put("ipPool", "2001:2::/48").put("poolSize", 65535)))
+        profile.put("dns", JSONObject()
+            .put("servers", JSONArray()
+                .put(JSONObject().put("address", "fakedns")
+                    .put("domains", JSONArray(direct))
+                    .put("skipFallback", true))
+                .put("1.1.1.1"))
+            .put("disableFallbackIfMatch", true))
         val rules = JSONArray()
+        rules.put(JSONObject().put("type", "field")
+            .put("inboundTag", JSONArray().put("tun-in"))
+            .put("port", "53")
+            .put("network", "tcp,udp")
+            .put("outboundTag", "dns-out"))
         if (custom.isNotEmpty()) rules.put(rule(custom, "direct"))
         if (blocked.isNotEmpty()) rules.put(rule(blocked, "proxy"))
         if (automatic.isNotEmpty()) rules.put(rule(automatic, "direct"))

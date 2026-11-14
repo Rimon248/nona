@@ -1,0 +1,10 @@
+# Apply alongside compose.yaml, compose.oidc.yaml and compose.auth.yaml only
+# after the private manifest and Aeza credentials have been installed.
+services:
+  admin-api:
+    environment:
+      NONA_NODES_FILE: /run/nona/nodes.json
+    volumes:
+      - ./secrets/nodes.json:/run/nona/nodes.json:ro
+      - ./secrets/aeza_node_settings.json:/run/nona/aeza_node_settings.json:ro
+      - ./secrets/aeza_3xui_token:/run/nona/aeza_3xui_token:ro

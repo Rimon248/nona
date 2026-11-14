@@ -1,0 +1,154 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter 3.47.9
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$env:RUNNER_TEMP/flutter"
+          "$env:RUNNER_TEMP/flutter/bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & "$env:RUNNER_TEMP/flutter/bin/flutter.bat" config --no-analytics
+
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $appVersion = ((Select-String -Path apps/client/pubspec.yaml -Pattern '^version:\s*(.+)$').Matches.Groups[1].Value).Split('+')[0]
+          $tagVersion = $env:GITHUB_REF_NAME.Substring(1)
+          if ($tagVersion -ne $appVersion) {
+            throw "Tag $env:GITHUB_REF_NAME must match app version $appVersion."
+          }
+
+      - name: Build Windows TUN app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./apps/client/build-windows-release.ps1
+          $bundle = 'apps/client/build/windows/x64/runner/Release'
+          if (-not (Test-Path (Join-Path $bundle 'nona_client.exe'))) {
+            throw 'Windows application bundle was not produced.'
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $zipName = "nona-$env:GITHUB_REF_NAME-windows.zip"
+          Compress-Archive -Path "$bundle/*" -DestinationPath "dist/$zipName" -Force
+          $hash = (Get-FileHash "dist/$zipName" -Algorithm SHA256).Hash.ToLower()
+          $encoding = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::WriteAllText("dist/$zipName.sha256", "$hash  $zipName`n", $encoding)
+
+      - name: Upload Windows release files
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: nona-desktop-windows
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter 3.47.9
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics
+
+      - name: Apply upstream macOS AOT workaround
+        shell: bash
+        run: python3 apps/client/macos/patch-flutter-aot.py "$RUNNER_TEMP/flutter"
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_version="$(sed -n 's/^version: *//p' apps/client/pubspec.yaml | cut -d+ -f1)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$tag_version" != "$app_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME must match app version $app_version." >&2
+            exit 1
+          fi
+
+      - name: Build macOS TUN app
+        shell: bash
+        run: |
+          set -euo pipefail
+          apps/client/build-macos-release.sh
+          app=apps/client/build/macos/Build/Products/Release/Nona.app
+          test -d "$app"
+          mkdir -p dist
+          zip_name="nona-${GITHUB_REF_NAME}-macos.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/$zip_name"
+          (cd dist && shasum -a 256 "$zip_name") > "dist/$zip_name.sha256"
+
+      - name: Upload macOS release files
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: nona-desktop-macos
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    runs-on: ubuntu-24.04
+    needs: [windows, macos]
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release notes
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Download Windows files
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: nona-desktop-windows
+          path: dist
+
+      - name: Download macOS files
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: nona-desktop-macos
+          path: dist
+
+      - name: Verify release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          for checksum in dist/*.sha256; do
+            (cd dist && shasum -a 256 -c "${checksum##*/}")
+          done
+
+      - name: Add desktop builds to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..40}; do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then break; fi
+            sleep 15
+          done
+          gh release view "$GITHUB_REF_NAME" >/dev/null
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

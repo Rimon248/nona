@@ -61,6 +61,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Keep test builds alongside the signed public app. Replacing a
+            // release with the debug key would require deleting account data.
+            applicationIdSuffix = ".debug"
+        }
         release {
             signingConfig = signingConfigs.getByName("release")
         }

@@ -47,6 +47,8 @@ class NonaControlScreen extends StatelessWidget {
     this.username,
     this.accessLabel,
     this.deviceRegistered = false,
+    this.macHelperState,
+    this.onMacHelperAction,
   });
 
   final int selectedTab;
@@ -85,6 +87,8 @@ class NonaControlScreen extends StatelessWidget {
   final String? username;
   final String? accessLabel;
   final bool deviceRegistered;
+  final String? macHelperState;
+  final VoidCallback? onMacHelperAction;
 
   bool get _connected => vpnState == 'connected';
 
@@ -1343,6 +1347,30 @@ class NonaControlScreen extends StatelessWidget {
           value: manualConnectionEnabled,
           onChanged: onManualConnectionChanged,
         ),
+        if (macHelperState != null) ...[
+          const SizedBox(height: 10),
+          _detailRow('Системный помощник macOS', switch (macHelperState) {
+            'enabled' => 'Разрешён: повторный пароль администратора не требуется',
+            'requiresApproval' => 'Ожидает разрешения в настройках macOS',
+            'notRegistered' => 'Нужна однократная регистрация',
+            'signingRequired' => 'Нужна постоянная подпись приложения',
+            'unsupported' => 'Нужна macOS 13 или новее',
+            'notFound' => 'Помощник отсутствует в этой сборке',
+            'error' => 'Не удалось проверить состояние',
+            _ => 'Проверяем состояние…',
+          }),
+          if (macHelperState == 'notRegistered' ||
+              macHelperState == 'requiresApproval' ||
+              macHelperState == 'error')
+            OutlinedButton(
+              onPressed: onMacHelperAction,
+              child: Text(macHelperState == 'requiresApproval'
+                  ? 'Открыть настройки macOS'
+                  : macHelperState == 'notRegistered'
+                  ? 'Подготовить помощник'
+                  : 'Проверить снова'),
+            ),
+        ],
         if (!deviceRegistered) ...[
           const SizedBox(height: 12),
           const Text(

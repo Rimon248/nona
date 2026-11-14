@@ -4,4 +4,6 @@
 
 The wrapper source is [libXray v26.10.31](https://github.com/XTLS/libXray/tree/v26.10.31). Its embedded core is [Xray-core v26.10.31](https://github.com/XTLS/Xray-core/tree/v26.10.31). License texts are in `licenses/` and are copied into the Android APK assets. libXray is MIT licensed; Xray-core is MPL-2.0 licensed. No app code was copied from v2rayN or v2rayNG.
 
+The iOS build downloads the official `libxray-apple-cgo.zip` asset from the same release at build time and verifies SHA-256 `2666babc1a91d8570a49bc817487338e7a71f17618e02a601e861928d254b95a`. The extracted XCFramework is ignored by Git; the repository retains the source and license attribution.
+
 The AAR is used only by Android. Other platform builds do not link it. The Hysteria 2 core is not yet bundled. Before release, verify source availability, attribution, ABI sizes, Android foreground-service declarations, and all transitive license obligations against the final build.

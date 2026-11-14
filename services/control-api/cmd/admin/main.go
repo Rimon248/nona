@@ -150,7 +150,7 @@ func main() {
 		}
 		pool, service := openService()
 		defer pool.Close()
-		if err := retireDevice(service, os.Args[2], os.Args[3]); err != nil {
+		if err := retireDevice(pool, service, os.Args[2], os.Args[3]); err != nil {
 			log.Print(err)
 			os.Exit(1)
 		}

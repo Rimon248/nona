@@ -8,13 +8,19 @@ import 'package:nona_client/configuration_vault.dart';
 
 class MemoryStore implements SecureStringStore {
   final values = <String, String>{};
+  int readCount = 0;
+  int writeCount = 0;
   bool failOnBundleWrite = false;
 
   @override
-  Future<String?> read(String key) async => values[key];
+  Future<String?> read(String key) async {
+    readCount++;
+    return values[key];
+  }
 
   @override
   Future<void> write(String key, String value) async {
+    writeCount++;
     if (failOnBundleWrite && key == 'nona.active_bundle.v1') {
       throw StateError('interrupted write');
     }
@@ -57,6 +63,40 @@ void main() {
       isNull,
     );
   });
+
+  test(
+    'reuses a verified envelope without repeated keychain operations',
+    () async {
+      final store = MemoryStore();
+      final vault = ConfigurationVault(store, verifier);
+      await vault.accept(
+        envelope,
+        accountId: 'account-a',
+        deviceId: 'device-a',
+        now: now,
+      );
+      final reads = store.readCount;
+      final writes = store.writeCount;
+      await vault.accept(
+        envelope,
+        accountId: 'account-a',
+        deviceId: 'device-a',
+        now: now,
+      );
+      await vault.load(accountId: 'account-a', deviceId: 'device-a', now: now);
+      await vault.load(accountId: 'account-a', deviceId: 'device-a', now: now);
+      expect(store.readCount, reads);
+      expect(store.writeCount, writes);
+      await expectLater(
+        vault.load(
+          accountId: 'account-a',
+          deviceId: 'device-a',
+          now: now.add(const Duration(days: 100)),
+        ),
+        throwsA(isA<BundleException>()),
+      );
+    },
+  );
 
   test('an interrupted replacement fails closed', () async {
     final store = MemoryStore()..failOnBundleWrite = true;

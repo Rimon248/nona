@@ -1,7 +1,17 @@
 import Cocoa
+import CryptoKit
 import Darwin
 import FlutterMacOS
 import Foundation
+import Security
+import ServiceManagement
+
+@objc(NonaPrivilegedHelperProtocol)
+protocol NonaPrivilegedHelperProtocol {
+  func connect(configuration: String, reply: @escaping (String?, String?) -> Void)
+  func stop(reply: @escaping (String?, String?) -> Void)
+  func status(reply: @escaping (String?) -> Void)
+}
 
 @main
 class AppDelegate: FlutterAppDelegate {
@@ -77,6 +87,10 @@ final class MacOSVpnControl: NSObject {
         do {
           let value: Any
           switch call.method {
+          case "helperStatus":
+            value = self.helperStatus()
+          case "installHelper":
+            value = try self.installHelper()
           case "connect":
             guard let arguments = call.arguments as? [String: Any],
                   let config = arguments["config"] as? String else {
@@ -84,7 +98,7 @@ final class MacOSVpnControl: NSObject {
             }
             value = try self.connect(config)
           case "status":
-            value = self.status()
+            value = try self.status()
           case "stop":
             try self.stop()
             value = NSNull()
@@ -107,7 +121,11 @@ final class MacOSVpnControl: NSObject {
   }
 
   private func connect(_ input: String) throws -> Bool {
-    if status() == "connected" { return true }
+    if helperIsEnabled {
+      _ = try helperConnect(input)
+      return true
+    }
+    if try status() == "connected" { return true }
     if fileManager.fileExists(atPath: stateURL.path) {
       try restoreStaleState()
     }
@@ -153,22 +171,179 @@ final class MacOSVpnControl: NSObject {
     }
   }
 
-  private func status() -> String {
-    guard let state = readState() else {
-      if let route = try? runCommand("/sbin/route", ["-n", "get", "default"]),
-         route.components(separatedBy: .newlines).contains(where: {
-           $0.trimmingCharacters(in: .whitespaces).hasPrefix("interface: utun")
-         }) {
-        return "other-vpn"
-      }
-      return "idle"
-    }
+  private var helperIsEnabled: Bool {
+    guard #available(macOS 13.0, *) else { return false }
+    return SMAppService.daemon(plistName: "ru.basketref.nona.helper.plist").status == .enabled
+  }
+
+  private func status() throws -> String {
+    if helperIsEnabled { return try helperTunnelStatus() }
+    guard let state = readState() else { return "idle" }
     return processIsXray(state.pid) && interfaceExists(state.interface) ? "connected" : "error"
   }
 
   private func stop() throws {
+    if helperIsEnabled {
+      try helperStop()
+      return
+    }
     guard let state = readState() else { return }
     try stopAndRestore(state)
+  }
+
+  private func helperStatus() -> String {
+    guard #available(macOS 13.0, *) else { return "unsupported" }
+    let service = SMAppService.daemon(plistName: "ru.basketref.nona.helper.plist")
+    switch service.status {
+    case .enabled:
+      return "enabled"
+    case .requiresApproval:
+      return "requiresApproval"
+    case .notFound:
+      return "notFound"
+    case .notRegistered:
+      return hasSigningCertificate ? "notRegistered" : "signingRequired"
+    @unknown default:
+      return "notFound"
+    }
+  }
+
+  private func installHelper() throws -> String {
+    guard #available(macOS 13.0, *) else { return "unsupported" }
+    let service = SMAppService.daemon(plistName: "ru.basketref.nona.helper.plist")
+    if service.status == .requiresApproval {
+      DispatchQueue.main.async { SMAppService.openSystemSettingsLoginItems() }
+      return "requiresApproval"
+    }
+    guard hasSigningCertificate else { throw MacOSVpnException.signingRequired }
+    try service.register()
+    if service.status == .requiresApproval {
+      DispatchQueue.main.async { SMAppService.openSystemSettingsLoginItems() }
+    }
+    return helperStatus()
+  }
+
+  private var hasSigningCertificate: Bool {
+    var code: SecStaticCode?
+    var information: CFDictionary?
+    guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, SecCSFlags(), &code) == errSecSuccess,
+          let code,
+          SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &information
+          ) == errSecSuccess,
+          let fields = information as? [String: Any],
+          let certificates = fields[kSecCodeInfoCertificates as String] as? [SecCertificate] else {
+      return false
+    }
+    return !certificates.isEmpty
+  }
+
+  private func helperCodeRequirement(for identifier: String) -> String? {
+    var code: SecStaticCode?
+    var information: CFDictionary?
+    guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, SecCSFlags(), &code) == errSecSuccess,
+          let code,
+          SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &information
+          ) == errSecSuccess,
+          let fields = information as? [String: Any],
+          let certificates = fields[kSecCodeInfoCertificates as String] as? [SecCertificate],
+          let leaf = certificates.first else {
+      return nil
+    }
+    if let team = fields[kSecCodeInfoTeamIdentifier as String] as? String, !team.isEmpty {
+      return "identifier \"\(identifier)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
+    }
+    let fingerprint = Insecure.SHA1.hash(data: SecCertificateCopyData(leaf) as Data)
+      .map { String(format: "%02x", $0) }.joined()
+    return "identifier \"\(identifier)\" and certificate leaf = H\"\(fingerprint)\""
+  }
+
+  private func makeHelperConnection() throws -> NSXPCConnection {
+    guard #available(macOS 13.0, *), helperIsEnabled,
+          let requirement = helperCodeRequirement(for: "ru.basketref.nona.helper") else {
+      throw MacOSVpnException.helperUnavailable
+    }
+    let connection = NSXPCConnection(machServiceName: "ru.basketref.nona.helper", options: .privileged)
+    connection.remoteObjectInterface = NSXPCInterface(with: NonaPrivilegedHelperProtocol.self)
+    connection.setCodeSigningRequirement(requirement)
+    connection.resume()
+    return connection
+  }
+
+  private func helperConnect(_ configuration: String) throws -> String {
+    let connection = try makeHelperConnection()
+    defer { connection.invalidate() }
+    let semaphore = DispatchSemaphore(value: 0)
+    let lock = NSLock()
+    var response: (String?, String?)?
+    var transportFailed = false
+    let proxy = connection.remoteObjectProxyWithErrorHandler { _ in
+      lock.lock(); transportFailed = true; lock.unlock(); semaphore.signal()
+    } as? NonaPrivilegedHelperProtocol
+    guard let proxy else { throw MacOSVpnException.helperUnavailable }
+    proxy.connect(configuration: configuration) { value, error in
+      lock.lock(); response = (value, error); lock.unlock(); semaphore.signal()
+    }
+    guard semaphore.wait(timeout: .now() + 90) == .success else {
+      throw MacOSVpnException.helperUnavailable
+    }
+    lock.lock(); let result = response; let failed = transportFailed; lock.unlock()
+    if let error = result?.1 { throw MacOSVpnException.helperFailed(error) }
+    guard !failed, let interface = result?.0, !interface.isEmpty else {
+      throw MacOSVpnException.helperUnavailable
+    }
+    return interface
+  }
+
+  private func helperStop() throws {
+    let connection = try makeHelperConnection()
+    defer { connection.invalidate() }
+    let semaphore = DispatchSemaphore(value: 0)
+    let lock = NSLock()
+    var response: (String?, String?)?
+    var transportFailed = false
+    let proxy = connection.remoteObjectProxyWithErrorHandler { _ in
+      lock.lock(); transportFailed = true; lock.unlock(); semaphore.signal()
+    } as? NonaPrivilegedHelperProtocol
+    guard let proxy else { throw MacOSVpnException.helperUnavailable }
+    proxy.stop { value, error in
+      lock.lock(); response = (value, error); lock.unlock(); semaphore.signal()
+    }
+    guard semaphore.wait(timeout: .now() + 45) == .success else {
+      throw MacOSVpnException.helperUnavailable
+    }
+    lock.lock(); let result = response; let failed = transportFailed; lock.unlock()
+    if let error = result?.1 { throw MacOSVpnException.helperFailed(error) }
+    guard !failed, result?.0 == "idle" else { throw MacOSVpnException.helperUnavailable }
+  }
+
+  private func helperTunnelStatus() throws -> String {
+    let connection = try makeHelperConnection()
+    defer { connection.invalidate() }
+    let semaphore = DispatchSemaphore(value: 0)
+    let lock = NSLock()
+    var result: String?
+    var transportFailed = false
+    let proxy = connection.remoteObjectProxyWithErrorHandler { _ in
+      lock.lock(); transportFailed = true; lock.unlock(); semaphore.signal()
+    } as? NonaPrivilegedHelperProtocol
+    guard let proxy else { throw MacOSVpnException.helperUnavailable }
+    proxy.status { value in
+      lock.lock(); result = value; lock.unlock(); semaphore.signal()
+    }
+    guard semaphore.wait(timeout: .now() + 10) == .success else {
+      throw MacOSVpnException.helperUnavailable
+    }
+    lock.lock(); let status = result; let failed = transportFailed; lock.unlock()
+    guard !failed, let status, ["idle", "connected", "error"].contains(status) else {
+      throw MacOSVpnException.helperUnavailable
+    }
+    return status
   }
 
   func stopBeforeQuit() -> Bool {
@@ -309,7 +484,7 @@ final class MacOSVpnControl: NSObject {
       throw MacOSVpnException.noNetworkServices
     }
     if interface.hasPrefix("utun") {
-      throw MacOSVpnException.otherVpnActive
+      throw MacOSVpnException.anotherVpnActive
     }
     let listing = try runCommand("/usr/sbin/networksetup", ["-listnetworkserviceorder"])
     let lines = listing.components(separatedBy: .newlines)
@@ -384,8 +559,11 @@ final class MacOSVpnControl: NSObject {
       return try runCommand("/usr/bin/osascript", ["-e", script])
     } catch let error as CommandFailure {
       if error.output.contains("(-128)") { throw MacOSVpnException.cancelled }
-      let reason = error.output.trimmingCharacters(in: .whitespacesAndNewlines)
-      throw MacOSVpnException.commandFailed(String(reason.prefix(240)))
+      if error.output.contains("NONA_STAGE:dns") { throw MacOSVpnException.dnsFailed }
+      if error.output.contains("NONA_STAGE:engine") || error.output.contains("NONA_STAGE:tun") {
+        throw MacOSVpnException.startupFailed
+      }
+      throw MacOSVpnException.commandFailed
     }
   }
 
@@ -423,22 +601,33 @@ private struct CommandFailure: Error {
 private enum MacOSVpnException: Error, Equatable {
   case invalidRequest
   case noNetworkServices
-  case otherVpnActive
+  case anotherVpnActive
   case noTunnelInterface
   case startupFailed
-  case commandFailed(String)
+  case dnsFailed
+  case routeFailed
+  case tunPermissionFailed
+  case commandFailed
   case cancelled
+  case signingRequired
+  case helperUnavailable
+  case helperFailed(String)
 
   var userMessage: String {
     switch self {
     case .invalidRequest: return "Не удалось подготовить профиль для macOS"
     case .noNetworkServices: return "Не найдены активные сетевые службы macOS"
-    case .otherVpnActive: return "Сейчас активен другой VPN. Отключите его и повторите подключение Ноны."
+    case .anotherVpnActive: return "Отключите другой VPN на Mac перед подключением Ноны"
     case .noTunnelInterface: return "Не удалось выбрать интерфейс VPN"
     case .startupFailed: return "Не удалось запустить системный туннель Xray"
-    case .commandFailed(let reason):
-      return reason.isEmpty ? "macOS не выполнила системную команду VPN" : "macOS не выполнила команду VPN: \(reason)"
+    case .dnsFailed: return "Не удалось изменить DNS активной сети на Mac"
+    case .routeFailed: return "Xray не смог установить системный маршрут VPN"
+    case .tunPermissionFailed: return "macOS не разрешила Xray создать интерфейс VPN"
+    case .commandFailed: return "Системная команда VPN завершилась с ошибкой или была отменена"
     case .cancelled: return "Подключение отменено в системном запросе"
+    case .signingRequired: return "Системный помощник требует постоянной подписи приложения; ad-hoc сборка не подходит"
+    case .helperUnavailable: return "Системный помощник Ноны не отвечает. Проверьте его разрешение в настройках macOS"
+    case .helperFailed(let message): return message
     }
   }
 }
