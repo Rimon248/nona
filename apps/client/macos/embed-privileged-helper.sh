@@ -10,6 +10,14 @@ module_cache="$scratch_dir/module-cache"
 identity=${NONA_MACOS_SIGNING_IDENTITY:--}
 trap 'rm -rf "$scratch_dir"' EXIT HUP INT TERM
 
+sign_code() {
+  if [ -n "${NONA_MACOS_KEYCHAIN:-}" ]; then
+    codesign --keychain "$NONA_MACOS_KEYCHAIN" "$@"
+  else
+    codesign "$@"
+  fi
+}
+
 if [ ! -d "$app_path" ]; then
   echo "macOS app bundle not found: $app_path" >&2
   exit 1
@@ -40,17 +48,36 @@ mkdir -p "$app_path/Contents/Library/LaunchDaemons"
 cp "$helper_plist" "$app_path/Contents/Library/LaunchDaemons/ru.basketref.nona.helper.plist"
 
 if [ "$identity" = "-" ]; then
-  codesign --force --sign - "$app_path/Contents/MacOS/NonaPrivilegedHelper"
-  codesign --force --deep --sign - "$app_path"
+  # Sign Flutter's nested frameworks and Xray first. --deep also re-signs the
+  # helper with a generated identifier, so restore its Mach service identifier
+  # before sealing the outer app bundle.
+  sign_code --force --deep --preserve-metadata=entitlements --sign - "$app_path"
+  sign_code --force --identifier ru.basketref.nona.helper --sign - \
+    "$app_path/Contents/MacOS/NonaPrivilegedHelper"
+  sign_code --force --preserve-metadata=entitlements --sign - "$app_path"
 else
   if [ "${NONA_MACOS_HARDENED_RUNTIME:-0}" = "1" ]; then
-    codesign --force --options runtime --timestamp --sign "$identity" \
+    sign_code --force --deep --preserve-metadata=entitlements \
+      --options runtime --timestamp --sign "$identity" "$app_path"
+    sign_code --force --identifier ru.basketref.nona.helper \
+      --options runtime --timestamp --sign "$identity" \
       "$app_path/Contents/MacOS/NonaPrivilegedHelper"
-    codesign --force --deep --options runtime --timestamp --sign "$identity" "$app_path"
+    sign_code --force --preserve-metadata=entitlements \
+      --options runtime --timestamp --sign "$identity" "$app_path"
   else
-    codesign --force --sign "$identity" "$app_path/Contents/MacOS/NonaPrivilegedHelper"
-    codesign --force --deep --sign "$identity" "$app_path"
+    sign_code --force --deep --preserve-metadata=entitlements --sign "$identity" "$app_path"
+    sign_code --force --identifier ru.basketref.nona.helper --sign "$identity" \
+      "$app_path/Contents/MacOS/NonaPrivilegedHelper"
+    sign_code --force --preserve-metadata=entitlements --sign "$identity" "$app_path"
   fi
+  codesign --verify --strict \
+    -R='identifier "ru.basketref.nona.helper" and anchor apple generic' \
+    "$app_path/Contents/MacOS/NonaPrivilegedHelper"
+  codesign --verify --strict \
+    -R='identifier "ru.basketref.nona" and anchor apple generic' "$app_path"
 fi
+codesign --verify --strict \
+  -R='identifier "ru.basketref.nona.helper"' \
+  "$app_path/Contents/MacOS/NonaPrivilegedHelper"
 codesign --verify --deep --strict "$app_path"
 echo "Embedded universal Nona macOS LaunchDaemon helper in $app_path"

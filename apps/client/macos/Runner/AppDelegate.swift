@@ -121,7 +121,12 @@ final class MacOSVpnControl: NSObject {
   }
 
   private func connect(_ input: String) throws -> Bool {
-    if helperIsEnabled {
+    if #available(macOS 13.0, *) {
+      guard helperIsEnabled else { throw MacOSVpnException.helperNotEnabled }
+      // Restore a tunnel left by an earlier preview once before switching to the daemon.
+      if fileManager.fileExists(atPath: stateURL.path) {
+        try restoreStaleState()
+      }
       _ = try helperConnect(input)
       return true
     }
@@ -177,13 +182,24 @@ final class MacOSVpnControl: NSObject {
   }
 
   private func status() throws -> String {
-    if helperIsEnabled { return try helperTunnelStatus() }
+    if #available(macOS 13.0, *) {
+      if fileManager.fileExists(atPath: stateURL.path) {
+        guard let state = readState() else { return "error" }
+        return processIsXray(state.pid) && interfaceExists(state.interface) ? "connected" : "error"
+      }
+      return helperIsEnabled ? try helperTunnelStatus() : "idle"
+    }
     guard let state = readState() else { return "idle" }
     return processIsXray(state.pid) && interfaceExists(state.interface) ? "connected" : "error"
   }
 
   private func stop() throws {
-    if helperIsEnabled {
+    if fileManager.fileExists(atPath: stateURL.path) {
+      try restoreStaleState()
+      return
+    }
+    if #available(macOS 13.0, *) {
+      guard helperIsEnabled else { return }
       try helperStop()
       return
     }
@@ -225,19 +241,14 @@ final class MacOSVpnControl: NSObject {
 
   private var hasSigningCertificate: Bool {
     var code: SecStaticCode?
-    var information: CFDictionary?
+    var requirement: SecRequirement?
     guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, SecCSFlags(), &code) == errSecSuccess,
           let code,
-          SecCodeCopySigningInformation(
-            code,
-            SecCSFlags(rawValue: kSecCSSigningInformation),
-            &information
-          ) == errSecSuccess,
-          let fields = information as? [String: Any],
-          let certificates = fields[kSecCodeInfoCertificates as String] as? [SecCertificate] else {
+          SecRequirementCreateWithString("anchor apple generic" as CFString, SecCSFlags(), &requirement) == errSecSuccess,
+          let requirement else {
       return false
     }
-    return !certificates.isEmpty
+    return SecStaticCodeCheckValidity(code, SecCSFlags(), requirement) == errSecSuccess
   }
 
   private func helperCodeRequirement(for identifier: String) -> String? {
@@ -610,6 +621,7 @@ private enum MacOSVpnException: Error, Equatable {
   case commandFailed
   case cancelled
   case signingRequired
+  case helperNotEnabled
   case helperUnavailable
   case helperFailed(String)
 
@@ -625,7 +637,8 @@ private enum MacOSVpnException: Error, Equatable {
     case .tunPermissionFailed: return "macOS не разрешила Xray создать интерфейс VPN"
     case .commandFailed: return "Системная команда VPN завершилась с ошибкой или была отменена"
     case .cancelled: return "Подключение отменено в системном запросе"
-    case .signingRequired: return "Системный помощник требует постоянной подписи приложения; ad-hoc сборка не подходит"
+    case .signingRequired: return "Для системного помощника нужна подпись Apple; сборка с ad-hoc подписью не подходит"
+    case .helperNotEnabled: return "На экране аккаунта подготовьте и разрешите системный помощник Ноны перед подключением"
     case .helperUnavailable: return "Системный помощник Ноны не отвечает. Проверьте его разрешение в настройках macOS"
     case .helperFailed(let message): return message
     }
