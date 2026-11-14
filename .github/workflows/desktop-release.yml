@@ -79,6 +79,13 @@ jobs:
         shell: bash
         run: python3 apps/client/macos/patch-flutter-aot.py "$RUNNER_TEMP/flutter"
 
+      - name: Prepare stable macOS release identity
+        shell: bash
+        env:
+          NONA_MACOS_CERT_P12_BASE64: ${{ secrets.NONA_MACOS_CERT_P12_BASE64 }}
+          NONA_MACOS_CERT_PASSWORD: ${{ secrets.NONA_MACOS_CERT_PASSWORD }}
+        run: bash apps/client/macos/prepare-ci-signing.sh
+
       - name: Verify release version
         shell: bash
         run: |
@@ -108,6 +115,11 @@ jobs:
           name: nona-desktop-macos
           path: dist/*
           if-no-files-found: error
+
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: security delete-keychain "$RUNNER_TEMP/nona-signing.keychain-db" 2>/dev/null || true
 
   publish:
     runs-on: ubuntu-24.04
