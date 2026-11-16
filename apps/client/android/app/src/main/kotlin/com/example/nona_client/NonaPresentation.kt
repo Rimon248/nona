@@ -1,0 +1,140 @@
+package com.example.nona_client
+
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+
+internal object NonaPresentation {
+    const val vpnId = 1001
+    private const val updateId = 1002
+    private const val vpnChannel = "nona_vpn"
+    private const val updateChannel = "nona_updates"
+    private const val settingsName = "nona_notification_settings"
+    private const val presentationName = "nona_vpn_presentation"
+    const val restartAction = "com.example.nona_client.RESTART"
+    const val connectAction = "com.example.nona_client.CONNECT"
+    const val stopAction = "com.example.nona_client.STOP"
+    const val pingAction = "com.example.nona_client.PING"
+
+    fun setSettings(context: Context, updates: Boolean, actions: Boolean, ping: Boolean) {
+        context.getSharedPreferences(settingsName, Context.MODE_PRIVATE).edit()
+            .putBoolean("updates", updates)
+            .putBoolean("actions", actions)
+            .putBoolean("ping", ping).apply()
+        if (!updates) manager(context).cancel(updateId)
+        if (NonaVpnService.state == "connected") publishVpn(context)
+        NonaWidgetProvider.updateAll(context)
+    }
+
+    fun updatesEnabled(context: Context) =
+        context.getSharedPreferences(settingsName, Context.MODE_PRIVATE).getBoolean("updates", true)
+
+    fun setCountry(context: Context, country: String?) {
+        context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).edit()
+            .putString("country", country?.take(60)).remove("latency").apply()
+        publishVpn(context)
+    }
+
+    fun setLatency(context: Context, milliseconds: Int?) {
+        val edit = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).edit()
+        if (milliseconds == null) edit.remove("latency") else edit.putInt("latency", milliseconds.coerceIn(1, 60000))
+        edit.apply()
+        publishVpn(context)
+    }
+
+    fun country(context: Context): String? =
+        context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).getString("country", null)
+
+    fun latency(context: Context): Int? {
+        val prefs = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE)
+        return if (prefs.contains("latency")) prefs.getInt("latency", 0) else null
+    }
+
+    private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)
+
+    private fun channels(context: Context) {
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager(context).createNotificationChannel(
+                NotificationChannel(vpnChannel, "Нона VPN", NotificationManager.IMPORTANCE_LOW),
+            )
+            manager(context).createNotificationChannel(
+                NotificationChannel(updateChannel, "Обновления Ноны", NotificationManager.IMPORTANCE_DEFAULT),
+            )
+        }
+    }
+
+    private fun activityIntent(context: Context, action: String? = null, requestCode: Int = 0): PendingIntent =
+        PendingIntent.getActivity(context, requestCode,
+            Intent(context, MainActivity::class.java).apply {
+                if (action != null) this.action = action
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    private fun receiverIntent(context: Context, action: String, requestCode: Int): PendingIntent =
+        PendingIntent.getBroadcast(context, requestCode,
+            Intent(context, NonaActionReceiver::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    fun connectIntent(context: Context) = activityIntent(context, connectAction, 10)
+    fun restartIntent(context: Context) = activityIntent(context, restartAction, 11)
+    fun stopIntent(context: Context) = receiverIntent(context, stopAction, 12)
+    fun pingIntent(context: Context) = receiverIntent(context, pingAction, 13)
+
+    fun vpnNotification(context: Context, state: String): Notification {
+        channels(context)
+        val prefs = context.getSharedPreferences(settingsName, Context.MODE_PRIVATE)
+        val connected = state == "connected"
+        val description = when (state) {
+            "connected" -> listOfNotNull("VPN подключён", country(context),
+                if (prefs.getBoolean("ping", false)) latency(context)?.let { "$it мс" } else null).joinToString(" · ")
+            "disconnecting" -> "Отключаем VPN"
+            else -> "Подключаем VPN"
+        }
+        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, vpnChannel)
+            else Notification.Builder(context)
+        builder.setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Нона")
+            .setContentText(description)
+            .setContentIntent(activityIntent(context))
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+        if (connected && prefs.getBoolean("actions", true)) {
+            builder.addAction(Notification.Action.Builder(null, "Перезапустить", restartIntent(context)).build())
+            builder.addAction(Notification.Action.Builder(null, "Отключить", stopIntent(context)).build())
+        }
+        if (connected && prefs.getBoolean("ping", false)) {
+            builder.addAction(Notification.Action.Builder(null, "Проверить пинг", pingIntent(context)).build())
+        }
+        return builder.build()
+    }
+
+    fun publishVpn(context: Context) {
+        val state = NonaVpnService.state
+        if (state == "connected" || state == "connecting" || state == "disconnecting") {
+            manager(context).notify(vpnId, vpnNotification(context, state))
+        }
+        NonaWidgetProvider.updateAll(context)
+    }
+
+    fun showUpdate(context: Context, version: String, tag: String) {
+        if (!updatesEnabled(context) || !Regex("^\\d+\\.\\d+\\.\\d+$").matches(version)) return
+        if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val prefs = context.getSharedPreferences(settingsName, Context.MODE_PRIVATE)
+        if (prefs.getString("lastUpdateTag", null) == tag) return
+        channels(context)
+        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, updateChannel)
+            else Notification.Builder(context)
+        manager(context).notify(updateId, builder.setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("Доступна Нона $version")
+            .setContentText("Откройте приложение, чтобы обновиться")
+            .setContentIntent(activityIntent(context, requestCode = 20))
+            .setAutoCancel(true).build())
+        prefs.edit().putString("lastUpdateTag", tag).apply()
+    }
+}

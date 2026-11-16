@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import 'connection_selection.dart';
 import 'country_flag.dart';
+import 'app_settings.dart';
 import 'delayed_progress_indicator.dart';
 import 'routing_summary.dart';
 import 'nona_control_theme.dart';
@@ -38,6 +39,8 @@ class NonaControlScreen extends StatelessWidget {
     required this.onManualConnectionChanged,
     required this.onSelectNode,
     required this.onSelectTransport,
+    this.connectionPicker = ConnectionPickerMode.both,
+    this.onOpenSettings,
     this.routingSummary,
     this.routingLoadFailed = false,
     this.country,
@@ -82,6 +85,8 @@ class NonaControlScreen extends StatelessWidget {
   final ValueChanged<bool> onManualConnectionChanged;
   final ValueChanged<String?> onSelectNode;
   final ValueChanged<PreferredTransport> onSelectTransport;
+  final ConnectionPickerMode connectionPicker;
+  final VoidCallback? onOpenSettings;
   final int? latencyMs;
   final String? latencyMessage;
   final String? username;
@@ -130,11 +135,18 @@ class NonaControlScreen extends StatelessWidget {
       PreferredTransport.hysteria2 => 'Hysteria2',
       PreferredTransport.vlessReality => 'VLESS',
     };
-    return '$location · $protocol';
+    return switch (connectionPicker) {
+      ConnectionPickerMode.country => location,
+      ConnectionPickerMode.transport => protocol,
+      _ => '$location · $protocol',
+    };
   }
 
   Widget _connectionSettings(BuildContext context) {
-    if (!manualConnectionEnabled) return const SizedBox.shrink();
+    if (!manualConnectionEnabled ||
+        connectionPicker == ConnectionPickerMode.hidden) {
+      return const SizedBox.shrink();
+    }
     final selected = nodeOptions.where((item) => item.id == selectedNodeId);
     final selectedCountry = selected.isEmpty ? null : selected.first.country;
     return SizedBox(
@@ -217,80 +229,85 @@ class NonaControlScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Страна сервера',
-                    style: TextStyle(color: NonaColor.muted),
-                  ),
-                  option(
-                    'Автоматически',
-                    'Сначала доступный сервер',
-                    const CountryFlag(country: null),
-                    chosenNode == null,
-                    () {
-                      setSheetState(() => chosenNode = null);
-                      onSelectNode(null);
-                    },
-                  ),
-                  for (final node in nodeOptions)
+                  if (connectionPicker != ConnectionPickerMode.transport) ...[
+                    const Text(
+                      'Страна сервера',
+                      style: TextStyle(color: NonaColor.muted),
+                    ),
                     option(
-                      node.country,
-                      null,
-                      CountryFlag(country: node.country),
-                      chosenNode == node.id,
+                      'Автоматически',
+                      'Сначала доступный сервер',
+                      const CountryFlag(country: null),
+                      chosenNode == null,
                       () {
-                        setSheetState(() {
-                          chosenNode = node.id;
-                          if (!node.supports(chosenTransport)) {
-                            chosenTransport = PreferredTransport.automatic;
-                          }
-                        });
-                        onSelectNode(node.id);
+                        setSheetState(() => chosenNode = null);
+                        onSelectNode(null);
                       },
                     ),
-                  const Divider(),
-                  const Text(
-                    'Способ подключения',
-                    style: TextStyle(color: NonaColor.muted),
-                  ),
-                  option(
-                    'Автоматически',
-                    'Hysteria2, затем VLESS',
-                    const Icon(Icons.auto_awesome),
-                    chosenTransport == PreferredTransport.automatic,
-                    () {
-                      setSheetState(
-                        () => chosenTransport = PreferredTransport.automatic,
-                      );
-                      onSelectTransport(PreferredTransport.automatic);
-                    },
-                  ),
-                  if (supported.contains('hysteria2'))
+                    for (final node in nodeOptions)
+                      option(
+                        node.country,
+                        null,
+                        CountryFlag(country: node.country),
+                        chosenNode == node.id,
+                        () {
+                          setSheetState(() {
+                            chosenNode = node.id;
+                            if (!node.supports(chosenTransport)) {
+                              chosenTransport = PreferredTransport.automatic;
+                            }
+                          });
+                          onSelectNode(node.id);
+                        },
+                      ),
+                  ],
+                  if (connectionPicker != ConnectionPickerMode.country) ...[
+                    const Divider(),
+                    const Text(
+                      'Способ подключения',
+                      style: TextStyle(color: NonaColor.muted),
+                    ),
                     option(
-                      'Hysteria2',
-                      null,
-                      const Text('H'),
-                      chosenTransport == PreferredTransport.hysteria2,
+                      'Автоматически',
+                      'Hysteria2, затем VLESS',
+                      const Icon(Icons.auto_awesome),
+                      chosenTransport == PreferredTransport.automatic,
                       () {
                         setSheetState(
-                          () => chosenTransport = PreferredTransport.hysteria2,
+                          () => chosenTransport = PreferredTransport.automatic,
                         );
-                        onSelectTransport(PreferredTransport.hysteria2);
+                        onSelectTransport(PreferredTransport.automatic);
                       },
                     ),
-                  if (supported.contains('vless-reality'))
-                    option(
-                      'VLESS',
-                      null,
-                      const Text('V'),
-                      chosenTransport == PreferredTransport.vlessReality,
-                      () {
-                        setSheetState(
-                          () =>
-                              chosenTransport = PreferredTransport.vlessReality,
-                        );
-                        onSelectTransport(PreferredTransport.vlessReality);
-                      },
-                    ),
+                    if (supported.contains('hysteria2'))
+                      option(
+                        'Hysteria2',
+                        null,
+                        const Text('H'),
+                        chosenTransport == PreferredTransport.hysteria2,
+                        () {
+                          setSheetState(
+                            () =>
+                                chosenTransport = PreferredTransport.hysteria2,
+                          );
+                          onSelectTransport(PreferredTransport.hysteria2);
+                        },
+                      ),
+                    if (supported.contains('vless-reality'))
+                      option(
+                        'VLESS',
+                        null,
+                        const Text('V'),
+                        chosenTransport == PreferredTransport.vlessReality,
+                        () {
+                          setSheetState(
+                            () => chosenTransport =
+                                PreferredTransport.vlessReality,
+                          );
+                          onSelectTransport(PreferredTransport.vlessReality);
+                        },
+                      ),
+                  ],
                   if (vpnState != 'idle')
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 10),
@@ -1338,22 +1355,25 @@ class NonaControlScreen extends StatelessWidget {
           deviceRegistered ? 'Зарегистрировано' : 'Ожидает регистрации',
         ),
         _detailRow('Конфигурация', configurationMessage),
-        SwitchListTile.adaptive(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Выбор подключения на главной'),
-          subtitle: const Text(
-            'Если выключено, Нона всегда выбирает сервер и способ автоматически.',
+        if (defaultTargetPlatform != TargetPlatform.android)
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Выбор подключения на главной'),
+            subtitle: const Text(
+              'Если выключено, Нона всегда выбирает сервер и способ автоматически.',
+            ),
+            value: manualConnectionEnabled,
+            onChanged: onManualConnectionChanged,
           ),
-          value: manualConnectionEnabled,
-          onChanged: onManualConnectionChanged,
-        ),
         if (macHelperState != null) ...[
           const SizedBox(height: 10),
           _detailRow('Системный помощник macOS', switch (macHelperState) {
-            'enabled' => 'Разрешён: повторный пароль администратора не требуется',
+            'enabled' =>
+              'Разрешён: повторный пароль администратора не требуется',
             'requiresApproval' => 'Ожидает разрешения в настройках macOS',
             'notRegistered' => 'Нужна однократная регистрация',
-            'signingRequired' => 'Сборка без подписи Apple: помощник недоступен',
+            'signingRequired' =>
+              'Сборка без подписи Apple: помощник недоступен',
             'unsupported' => 'Нужна macOS 13 или новее',
             'notFound' => 'Помощник отсутствует в этой сборке',
             'error' => 'Не удалось проверить состояние',
@@ -1364,11 +1384,13 @@ class NonaControlScreen extends StatelessWidget {
               macHelperState == 'error')
             OutlinedButton(
               onPressed: onMacHelperAction,
-              child: Text(macHelperState == 'requiresApproval'
-                  ? 'Открыть настройки macOS'
-                  : macHelperState == 'notRegistered'
-                  ? 'Подготовить помощник'
-                  : 'Проверить снова'),
+              child: Text(
+                macHelperState == 'requiresApproval'
+                    ? 'Открыть настройки macOS'
+                    : macHelperState == 'notRegistered'
+                    ? 'Подготовить помощник'
+                    : 'Проверить снова',
+              ),
             ),
           if (macHelperState == 'notRegistered' ||
               macHelperState == 'requiresApproval' ||
@@ -1410,6 +1432,17 @@ class NonaControlScreen extends StatelessWidget {
             ),
             icon: const Icon(Icons.logout_rounded),
             label: const Text('Выйти из аккаунта'),
+          ),
+        ),
+      ],
+      if (onOpenSettings != null) ...[
+        const SizedBox(height: 18),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: onOpenSettings,
+            icon: const Icon(Icons.settings_outlined),
+            label: const Text('Настройки'),
           ),
         ),
       ],

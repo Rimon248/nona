@@ -1,8 +1,5 @@
 package com.example.nona_client
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -28,8 +25,6 @@ import java.util.concurrent.Executors
  */
 class NonaVpnService : VpnService() {
     companion object {
-        private const val notificationChannel = "nona_vpn"
-        private const val notificationId = 1001
         private const val stopAction = "com.example.nona_client.STOP_VPN"
         private val pendingLock = Any()
         private var pendingProfile: String? = null
@@ -126,9 +121,11 @@ class NonaVpnService : VpnService() {
         if (intent?.action == stopAction) {
             cancelled = true
             state = "disconnecting"
+            NonaPresentation.publishVpn(this)
             worker.execute {
                 cleanup()
                 state = "idle"
+                NonaPresentation.setCountry(this, null)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelfResult(startId)
             }
@@ -140,6 +137,7 @@ class NonaVpnService : VpnService() {
         if (profile == null && state == "connected") return START_NOT_STICKY
         if (profile == null || prepare(this) != null) {
             state = "idle"
+            NonaWidgetProvider.updateAll(this)
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -147,38 +145,23 @@ class NonaVpnService : VpnService() {
             startVpnForeground()
         } catch (_: Exception) {
             state = "error"
+            NonaWidgetProvider.updateAll(this)
             stopSelf(startId)
             return START_NOT_STICKY
         }
         state = "connecting"
+        NonaPresentation.publishVpn(this)
         cancelled = false
         worker.execute { connect(profile, startId) }
         return START_NOT_STICKY
     }
 
     private fun startVpnForeground() {
-        val manager = getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(
-                NotificationChannel(notificationChannel, "Нона VPN", NotificationManager.IMPORTANCE_LOW),
-            )
-        }
-        val builder = if (Build.VERSION.SDK_INT >= 26) {
-            Notification.Builder(this, notificationChannel)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-        val notification = builder
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Нона")
-            .setContentText("Подготовка VPN-подключения")
-            .setOngoing(true)
-            .build()
+        val notification = NonaPresentation.vpnNotification(this, "connecting")
         if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
+            startForeground(NonaPresentation.vpnId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
         } else {
-            startForeground(notificationId, notification)
+            startForeground(NonaPresentation.vpnId, notification)
         }
     }
 
@@ -314,25 +297,14 @@ class NonaVpnService : VpnService() {
                 probe.disconnect()
             }
             state = "connected"
-            val notificationBuilder = if (Build.VERSION.SDK_INT >= 26) {
-                Notification.Builder(this, notificationChannel)
-            } else {
-                @Suppress("DEPRECATION")
-                Notification.Builder(this)
-            }
-            val notification = notificationBuilder
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Нона")
-                .setContentText("VPN-подключение активно")
-                .setOngoing(true)
-                .build()
-            getSystemService(NotificationManager::class.java).notify(notificationId, notification)
+            NonaPresentation.publishVpn(this)
         } catch (error: Exception) {
             // Only the stage and exception type are logged. Native errors may
             // contain credential material and must never reach Android logs.
             Log.e("NonaVpnService", "VPN setup failed at $stage (${error.javaClass.simpleName})")
             state = "error"
             cleanup()
+            NonaWidgetProvider.updateAll(this)
             stopSelf(startId)
         }
     }
@@ -355,6 +327,7 @@ class NonaVpnService : VpnService() {
         worker.execute {
             cleanup()
             if (state != "error") state = "idle"
+            NonaPresentation.setCountry(this, null)
         }
         worker.shutdown()
         super.onDestroy()

@@ -16,6 +16,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'app_update.dart';
+import 'app_settings.dart';
 import 'connection_selection.dart';
 import 'instant_page_route.dart';
 import 'internet_routing_screen.dart';
@@ -108,6 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _selectedNodeId;
   PreferredTransport _selectedTransport = PreferredTransport.automatic;
   bool _manualConnectionEnabled = false;
+  NonaSettings _settings = const NonaSettings();
   List<ConnectionNodeOption> _availableNodes = const [];
   RoutingSummary? _routingSummary;
   InternetRoutingState? _routingData;
@@ -127,6 +129,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _installingMacHelper = false;
 
   static const MethodChannel _windowChannel = MethodChannel('nona.window');
+  static const MethodChannel _androidUiChannel = MethodChannel(
+    'nona.android_ui',
+  );
 
   bool get _vpnControlsAvailable =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -147,6 +152,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       _windowChannel.setMethodCallHandler(_handleWindowCall);
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _androidUiChannel.setMethodCallHandler(_handleAndroidAction);
+      unawaited(_loadAndroidSettings());
     }
     if (_vpnControlsAvailable) _refreshVpnState();
     if (_apiBaseUrl.isEmpty) {
@@ -248,6 +257,9 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(_closeAuthenticationWindow());
     if (defaultTargetPlatform == TargetPlatform.windows) {
       _windowChannel.setMethodCallHandler(null);
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _androidUiChannel.setMethodCallHandler(null);
     }
     _oidc?.dispose();
     _http?.close();
@@ -372,8 +384,27 @@ class _HomeScreenState extends State<HomeScreen> {
         const Duration(milliseconds: 900) - DateTime.now().difference(started);
     if (remaining > Duration.zero) await Future<void>.delayed(remaining);
     if (!mounted) return;
-    if (update != null) await _offerAppUpdate(update);
+    if (update != null) {
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          _settings.updateNotifications) {
+        unawaited(
+          _androidUiChannel.invokeMethod<void>('showUpdate', {
+            'version': update.version,
+            'tag': update.tag,
+          }),
+        );
+      }
+      await _offerAppUpdate(update);
+    }
     if (mounted) setState(() => _starting = false);
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(_consumeAndroidAction());
+      if (_settings.updateNotifications) {
+        unawaited(
+          _androidUiChannel.invokeMethod<void>('requestNotificationPermission'),
+        );
+      }
+    }
   }
 
   Future<void> _offerAppUpdate(AppUpdate update) async {
@@ -439,15 +470,27 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final nodeId = await _preferences.getString('preferred_node_id');
       final transportName = await _preferences.getString('preferred_transport');
-      final manualEnabled =
-          await _preferences.getBool(_manualPreferenceKey) ??
-          defaultTargetPlatform != TargetPlatform.android;
+      final androidSettings = defaultTargetPlatform == TargetPlatform.android
+          ? await NonaSettings.load(_preferences)
+          : null;
+      final manualEnabled = androidSettings != null
+          ? androidSettings.connectionPicker != ConnectionPickerMode.hidden
+          : await _preferences.getBool(_manualPreferenceKey) ?? true;
       final lastNodeId = await _preferences.getString('last_connected_node_id');
       if (!mounted) return;
       setState(() {
         _manualConnectionEnabled = manualEnabled;
-        _selectedNodeId = manualEnabled ? nodeId : null;
-        _selectedTransport = manualEnabled
+        if (androidSettings != null) _settings = androidSettings;
+        _selectedNodeId =
+            manualEnabled &&
+                androidSettings?.connectionPicker !=
+                    ConnectionPickerMode.transport
+            ? nodeId
+            : null;
+        _selectedTransport =
+            manualEnabled &&
+                androidSettings?.connectionPicker !=
+                    ConnectionPickerMode.country
             ? PreferredTransport.values.firstWhere(
                 (value) => value.name == transportName,
                 orElse: () => PreferredTransport.automatic,
@@ -457,6 +500,98 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } catch (_) {
       // Settings remain automatic if the platform store is unavailable.
+    }
+  }
+
+  Future<void> _loadAndroidSettings() async {
+    final settings = await NonaSettings.load(_preferences);
+    if (!mounted) return;
+    setState(() => _settings = settings);
+    await _androidUiChannel.invokeMethod<void>('setSettings', {
+      'updates': settings.updateNotifications,
+      'vpnActions': settings.vpnActions,
+      'pingAction': settings.pingAction,
+    });
+    if (settings.updateNotifications) {
+      await _androidUiChannel.invokeMethod<void>(
+        'requestNotificationPermission',
+      );
+    }
+  }
+
+  Future<void> _saveAndroidSettings(NonaSettings settings) async {
+    final requestPermission =
+        !_settings.updateNotifications && settings.updateNotifications;
+    setState(() {
+      _settings = settings;
+      _manualConnectionEnabled =
+          settings.connectionPicker != ConnectionPickerMode.hidden;
+      if (settings.connectionPicker == ConnectionPickerMode.hidden ||
+          settings.connectionPicker == ConnectionPickerMode.transport) {
+        _selectedNodeId = null;
+      }
+      if (settings.connectionPicker == ConnectionPickerMode.hidden ||
+          settings.connectionPicker == ConnectionPickerMode.country) {
+        _selectedTransport = PreferredTransport.automatic;
+      }
+    });
+    await settings.save(_preferences);
+    await _preferences.setBool(_manualPreferenceKey, _manualConnectionEnabled);
+    if (_selectedNodeId == null) await _preferences.remove('preferred_node_id');
+    await _preferences.setString(
+      'preferred_transport',
+      _selectedTransport.name,
+    );
+    await _androidUiChannel.invokeMethod<void>('setSettings', {
+      'updates': settings.updateNotifications,
+      'vpnActions': settings.vpnActions,
+      'pingAction': settings.pingAction,
+    });
+    if (requestPermission) {
+      await _androidUiChannel.invokeMethod<void>(
+        'requestNotificationPermission',
+        true,
+      );
+    }
+  }
+
+  Future<void> _consumeAndroidAction() async {
+    final action = await _androidUiChannel.invokeMethod<String>(
+      'pendingAction',
+    );
+    if (action != null) await _handleQuickAction(action);
+  }
+
+  Future<void> _handleAndroidAction(MethodCall call) async {
+    if (call.method == 'quickAction' && call.arguments is String) {
+      await _handleQuickAction(call.arguments as String);
+    }
+  }
+
+  Future<void> _handleQuickAction(String action) async {
+    if (!mounted) return;
+    if (_starting || _busy) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      return _handleQuickAction(action);
+    }
+    await _refreshVpnState();
+    if (action == 'PING') {
+      if (_vpnState == 'connected') await _measureVpnLatency();
+      return;
+    }
+    if (action == 'RESTART' && _vpnState == 'connected') {
+      await _disconnectVpn();
+      await _refreshVpnState();
+    }
+    if ((action == 'CONNECT' || action == 'RESTART') &&
+        _vpnState == 'idle' &&
+        canStartVpn(
+          busy: _busy,
+          vpnState: _vpnState,
+          accessStatus: _auth?.vpnAccessStatus,
+          hasConfiguration: _hasUsableConfiguration,
+        )) {
+      await _connectVpn();
     }
   }
 
@@ -799,6 +934,13 @@ class _HomeScreenState extends State<HomeScreen> {
           if (result) {
             _vpnTransport = candidate.name;
             _vpnCountry = countryForEndpoint(rawNode['endpoint'] as String);
+            if (defaultTargetPlatform == TargetPlatform.android) {
+              unawaited(
+                _androidUiChannel.invokeMethod<void>('presentation', {
+                  'country': _vpnCountry,
+                }),
+              );
+            }
             _lastConnectedNodeId = nodeId;
             unawaited(_preferences.setString('last_connected_node_id', nodeId));
             connected = true;
@@ -1002,6 +1144,12 @@ class _HomeScreenState extends State<HomeScreen> {
           _latencyMessage = 'VPN отключился во время проверки';
         }
       });
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          state == 'connected') {
+        unawaited(
+          _androidUiChannel.invokeMethod<void>('latency', milliseconds),
+        );
+      }
     } catch (_) {
       if (mounted && requestId == _latencyRequestId) {
         setState(
@@ -1246,6 +1394,19 @@ class _HomeScreenState extends State<HomeScreen> {
       selectedNodeId: _selectedNodeId,
       selectedTransport: _selectedTransport,
       manualConnectionEnabled: _manualConnectionEnabled,
+      connectionPicker: defaultTargetPlatform == TargetPlatform.android
+          ? _settings.connectionPicker
+          : ConnectionPickerMode.both,
+      onOpenSettings: defaultTargetPlatform == TargetPlatform.android
+          ? () => Navigator.of(context).push(
+              instantPageRoute<void>(
+                NonaSettingsScreen(
+                  settings: _settings,
+                  onChanged: (value) => unawaited(_saveAndroidSettings(value)),
+                ),
+              ),
+            )
+          : null,
       onManualConnectionChanged: (enabled) =>
           unawaited(_setManualConnectionEnabled(enabled)),
       onSelectNode: (id) => unawaited(_selectNode(id)),

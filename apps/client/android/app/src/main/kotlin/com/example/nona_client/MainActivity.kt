@@ -4,6 +4,9 @@ import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -17,12 +20,90 @@ class MainActivity : FlutterFragmentActivity() {
     private var vpnPermissionResult: MethodChannel.Result? = null
     private var updatePermissionResult: MethodChannel.Result? = null
     private var pendingUpdateFile: File? = null
+    private var pendingQuickAction: String? = null
+    private var quickChannel: MethodChannel? = null
     private val routingExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "nona-routing-loader")
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        pendingQuickAction = quickAction(intent)
+        super.onCreate(savedInstanceState)
+        UpdateCheckJob.schedule(this)
+        NonaWidgetProvider.updateAll(this)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val action = quickAction(intent) ?: return
+        pendingQuickAction = action
+        quickChannel?.invokeMethod("quickAction", action)
+    }
+
+    private fun quickAction(intent: Intent?): String? = when (intent?.action) {
+        NonaPresentation.connectAction -> "CONNECT"
+        NonaPresentation.restartAction -> "RESTART"
+        else -> null
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        quickChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nona.android_ui")
+        quickChannel!!.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "pendingAction" -> {
+                    result.success(pendingQuickAction)
+                    pendingQuickAction = null
+                }
+                "setSettings" -> {
+                    val raw = call.arguments as? Map<*, *>
+                    val updates = raw?.get("updates") as? Boolean
+                    val actions = raw?.get("vpnActions") as? Boolean
+                    val ping = raw?.get("pingAction") as? Boolean
+                    if (updates == null || actions == null || ping == null) {
+                        result.error("BAD_SETTINGS", "Invalid notification settings", null)
+                    } else {
+                        NonaPresentation.setSettings(this, updates, actions, ping)
+                        result.success(null)
+                    }
+                }
+                "presentation" -> {
+                    val raw = call.arguments as? Map<*, *>
+                    val country = raw?.get("country") as? String
+                    val latency = raw?.get("latency") as? Int
+                    NonaPresentation.setCountry(this, country)
+                    if (latency != null) NonaPresentation.setLatency(this, latency)
+                    result.success(null)
+                }
+                "latency" -> {
+                    NonaPresentation.setLatency(this, call.arguments as? Int)
+                    result.success(null)
+                }
+                "showUpdate" -> {
+                    val raw = call.arguments as? Map<*, *>
+                    val version = raw?.get("version") as? String
+                    val tag = raw?.get("tag") as? String
+                    if (version == null || tag == null) result.error("BAD_UPDATE", "Invalid update", null)
+                    else {
+                        NonaPresentation.showUpdate(this, version, tag)
+                        result.success(null)
+                    }
+                }
+                "requestNotificationPermission" -> {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        val prefs = getSharedPreferences("nona_notification_settings", MODE_PRIVATE)
+                        if (call.arguments == true || !prefs.getBoolean("permissionAsked", false)) {
+                            prefs.edit().putBoolean("permissionAsked", true).apply()
+                            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 50775)
+                        }
+                    }
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nona.app_update")
             .setMethodCallHandler { call, result ->
                 if (call.method != "install") {
