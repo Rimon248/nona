@@ -71,15 +71,23 @@ class NonaWidgetProvider : AppWidgetProvider() {
                 columns == 1 -> R.layout.nona_widget
                 columns == 2 && rows == 1 -> R.layout.nona_widget_medium
                 columns >= 3 && rows == 1 -> R.layout.nona_widget_large
-                columns == 2 && rows == 2 -> R.layout.nona_widget_square
-                else -> R.layout.nona_widget_spacious
+                columns == 2 && rows >= 2 -> R.layout.nona_widget_square
+                columns >= 4 && rows >= 2 -> R.layout.nona_widget_spacious4
+                else -> R.layout.nona_widget_spacious3
             }
             val state = NonaVpnService.currentState(context)
             val connected = state == "connected"
             val checked = connected || state == "connecting"
             val progress = animatedProgress ?: if (checked) 1f else 0f
             val views = RemoteViews(context.packageName, kind)
-            views.setImageViewBitmap(R.id.widget_toggle, NonaWidgetSwitch.bitmap(context, progress, state == "connecting"))
+            val switchScale = when (kind) {
+                R.layout.nona_widget_square -> 1.18f
+                R.layout.nona_widget_spacious3 -> 1.5f
+                R.layout.nona_widget_spacious4 -> 1.8f
+                else -> 1f
+            }
+            views.setImageViewBitmap(R.id.widget_toggle,
+                NonaWidgetSwitch.bitmap(context, progress, state == "connecting", switchScale))
             views.setOnClickPendingIntent(R.id.widget_toggle,
                 if (checked) NonaPresentation.stopIntent(context) else NonaPresentation.connectIntent(context))
             views.setContentDescription(R.id.widget_toggle,
@@ -89,44 +97,48 @@ class NonaWidgetProvider : AppWidgetProvider() {
                     else -> "Нона VPN выключен. Нажмите, чтобы включить"
                 })
 
-            val hasCountry = kind != R.layout.nona_widget && kind != R.layout.nona_widget_vertical2
-            if (hasCountry) {
-                val country = if (connected) NonaPresentation.country(context) else null
-                if (kind != R.layout.nona_widget_medium) {
-                    views.setTextViewText(R.id.widget_country,
-                        country ?: if (connected) "Нона VPN" else "Страна не выбрана")
+            val country = NonaPresentation.displayCountry(context)
+            val hasCountryText = kind != R.layout.nona_widget && kind != R.layout.nona_widget_vertical2
+            if (hasCountryText) {
+                views.setTextViewText(R.id.widget_country, country ?: "Страна не выбрана")
+            }
+            val hasFlag = kind != R.layout.nona_widget && kind != R.layout.nona_widget_vertical3
+            if (hasFlag) {
+                val flag = when (country) {
+                    "Нидерланды" -> R.drawable.nona_flag_nl
+                    "Швеция" -> R.drawable.nona_flag_se
+                    else -> null
                 }
-                if (kind != R.layout.nona_widget_vertical3) {
-                    val flag = when (country) {
-                        "Нидерланды" -> R.drawable.nona_flag_nl
-                        "Швеция" -> R.drawable.nona_flag_se
-                        else -> null
-                    }
-                    views.setViewVisibility(R.id.widget_flag, if (flag == null) View.GONE else View.VISIBLE)
-                    if (flag != null) views.setImageViewResource(R.id.widget_flag, flag)
-                    if (kind != R.layout.nona_widget_medium) views.setTextViewText(R.id.widget_status, when (state) {
-                        "connected" -> "Подключено"
-                        "connecting" -> "Подключаем"
-                        "disconnecting" -> "Отключаем"
-                        "error" -> "Ошибка запуска"
-                        else -> "Не подключено"
-                    })
-                    val padding = if (flag == null) 0 else (23 * context.resources.displayMetrics.density).toInt()
-                    if (kind == R.layout.nona_widget_large) {
-                        views.setViewPadding(R.id.widget_status, padding, 0, 0, 0)
-                    }
+                val keepFlagSpace = kind == R.layout.nona_widget_vertical2 || kind == R.layout.nona_widget_medium
+                views.setViewVisibility(R.id.widget_flag,
+                    if (flag != null) View.VISIBLE else if (keepFlagSpace) View.INVISIBLE else View.GONE)
+                if (flag != null) views.setImageViewResource(R.id.widget_flag, flag)
+            }
+            val hasStatus = kind == R.layout.nona_widget_medium || kind == R.layout.nona_widget_large ||
+                kind == R.layout.nona_widget_square || kind == R.layout.nona_widget_spacious3 ||
+                kind == R.layout.nona_widget_spacious4
+            if (hasStatus) {
+                views.setTextViewText(R.id.widget_status, when (state) {
+                    "connected" -> "Подключено"
+                    "connecting" -> "Подключаем"
+                    "disconnecting" -> "Отключаем"
+                    "error" -> "Ошибка запуска"
+                    else -> "Не подключено"
+                })
+                if (kind == R.layout.nona_widget_large) {
+                    val padding = if (country == null) 0 else (23 * context.resources.displayMetrics.density).toInt()
+                    views.setViewPadding(R.id.widget_status, padding, 0, 0, 0)
                 }
             }
-            val hasPing = kind == R.layout.nona_widget_vertical2 ||
-                kind == R.layout.nona_widget_vertical3 || kind == R.layout.nona_widget_large ||
-                kind == R.layout.nona_widget_square || kind == R.layout.nona_widget_spacious
+            val hasPing = kind != R.layout.nona_widget
             if (hasPing) {
                 views.setTextViewText(R.id.widget_ping_value,
                     if (connected) NonaPresentation.latency(context)?.let { "$it мс" } ?: "— мс" else "— мс")
-                if (kind != R.layout.nona_widget_vertical2) {
-                    views.setOnClickPendingIntent(R.id.widget_ping, NonaPresentation.pingIntent(context))
-                    views.setBoolean(R.id.widget_ping, "setEnabled", connected)
-                }
+            }
+            val hasPingButton = hasPing && kind != R.layout.nona_widget_medium
+            if (hasPingButton) {
+                views.setOnClickPendingIntent(R.id.widget_ping, NonaPresentation.pingIntent(context))
+                views.setBoolean(R.id.widget_ping, "setEnabled", connected)
             }
             manager.updateAppWidget(id, views)
         }

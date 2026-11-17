@@ -15,8 +15,8 @@ internal object NonaWidgetSwitch {
     private const val grey = 0xFF7F8991.toInt()
     private const val cream = 0xFFFBF0D9.toInt()
 
-    fun bitmap(context: Context, progress: Float, connecting: Boolean): Bitmap {
-        val density = context.resources.displayMetrics.density
+    fun bitmap(context: Context, progress: Float, connecting: Boolean, scale: Float = 1f): Bitmap {
+        val density = context.resources.displayMetrics.density * scale
         val width = (64 * density).toInt().coerceAtLeast(64)
         val height = (48 * density).toInt().coerceAtLeast(48)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)

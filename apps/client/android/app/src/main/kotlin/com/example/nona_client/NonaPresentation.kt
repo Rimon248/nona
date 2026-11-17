@@ -75,6 +75,11 @@ internal object NonaPresentation {
     fun country(context: Context): String? =
         context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).getString("country", null)
 
+    fun displayCountry(context: Context): String? =
+        context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).let {
+            it.getString("country", null) ?: it.getString("lastCountry", null)
+        }
+
     fun latency(context: Context): Int? {
         val prefs = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE)
         return if (prefs.contains("latency")) prefs.getInt("latency", 0) else null
