@@ -7,10 +7,67 @@ import 'nona_control_theme.dart';
 abstract final class NonaMotion {
   static const quick = Duration(milliseconds: 120);
   static const standard = Duration(milliseconds: 220);
-  static const page = Duration(milliseconds: 160);
+  static const page = Duration(milliseconds: 420);
+  static const startup = Duration(milliseconds: 520);
 
   static Duration duration(BuildContext context, Duration normal) =>
       MediaQuery.disableAnimationsOf(context) ? Duration.zero : normal;
+}
+
+/// A brief press and release on a cached circle, without repainting its content.
+class NonaConnectionPress extends StatefulWidget {
+  const NonaConnectionPress({
+    super.key,
+    required this.child,
+    required this.enabled,
+  });
+
+  final Widget child;
+  final bool enabled;
+
+  @override
+  State<NonaConnectionPress> createState() => _NonaConnectionPressState();
+}
+
+class _NonaConnectionPressState extends State<NonaConnectionPress>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _press = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 270),
+  );
+  late final Animation<double> _scale = TweenSequence<double>([
+    TweenSequenceItem(
+      tween: Tween(
+        begin: 1.0,
+        end: 0.93,
+      ).chain(CurveTween(curve: Curves.easeOutCubic)),
+      weight: 38,
+    ),
+    TweenSequenceItem(
+      tween: Tween(
+        begin: 0.93,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.easeOutBack)),
+      weight: 62,
+    ),
+  ]).animate(_press);
+
+  @override
+  void dispose() {
+    _press.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    onPointerDown: widget.enabled && !MediaQuery.disableAnimationsOf(context)
+        ? (_) => _press.forward(from: 0)
+        : null,
+    child: ScaleTransition(
+      scale: _scale,
+      child: RepaintBoundary(child: widget.child),
+    ),
+  );
 }
 
 /// The large VPN ring only animates its colors when the state changes.
@@ -60,22 +117,71 @@ class NonaConnectionHalo extends StatelessWidget {
               border: Border.all(color: color.withValues(alpha: 0.48)),
             ),
           ),
-          Positioned(
-            top: size * 0.02,
-            right: size * 0.17,
-            child: Container(
-              width: 16,
-              height: 16,
-              decoration: const BoxDecoration(
-                color: NonaColor.coral,
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
+          NonaStatusDot(orbitSize: size),
         ],
       ),
     );
   }
+}
+
+class NonaStatusDot extends StatefulWidget {
+  const NonaStatusDot({super.key, required this.orbitSize});
+
+  final double orbitSize;
+
+  @override
+  State<NonaStatusDot> createState() => _NonaStatusDotState();
+}
+
+class _NonaStatusDotState extends State<NonaStatusDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _orbit = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 6),
+    value: 0,
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _orbit.stop();
+      _orbit.value = 0;
+    } else if (!_orbit.isAnimating) {
+      _orbit.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _orbit.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _orbit,
+    child: const RepaintBoundary(
+      child: SizedBox(
+        width: 16,
+        height: 16,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: NonaColor.coral,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+    ),
+    builder: (context, child) {
+      final angle = -math.pi / 3 + _orbit.value * 2 * math.pi;
+      final radius = widget.orbitSize / 2 - 8;
+      return Transform.translate(
+        offset: Offset(radius * math.cos(angle), radius * math.sin(angle)),
+        child: child,
+      );
+    },
+  );
 }
 
 class NonaPingWave extends StatefulWidget {

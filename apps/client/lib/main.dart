@@ -36,6 +36,7 @@ import 'vpn_action_policy.dart';
 import 'windows_vpn_control.dart';
 import 'nona_control_screen.dart';
 import 'nona_control_theme.dart';
+import 'nona_motion.dart';
 import 'nona_startup_screen.dart';
 
 Future<void> main() async {
@@ -695,7 +696,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (tab < 0 || tab > 2) return;
     setState(() => _selectedTab = tab);
     if (tab != 1 || _routingData != null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future<void>.delayed(NonaMotion.duration(context, NonaMotion.page), () {
       if (!mounted || _selectedTab != 1 || _routingData != null) return;
       unawaited(_loadRoutingSummary());
     });
@@ -1299,7 +1300,31 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AnimatedSwitcher(
+    duration: NonaMotion.duration(context, NonaMotion.startup),
+    reverseDuration: NonaMotion.duration(context, NonaMotion.page),
+    layoutBuilder: (currentChild, previousChildren) => Stack(
+      fit: StackFit.expand,
+      children: [...previousChildren, ?currentChild],
+    ),
+    transitionBuilder: (child, animation) {
+      final enteringMain = child.key == const ValueKey('main-stage');
+      final position = Tween<Offset>(
+        begin: enteringMain ? const Offset(0, 0.045) : const Offset(0, -0.025),
+        end: Offset.zero,
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+      return FadeTransition(
+        opacity: animation,
+        child: SlideTransition(position: position, child: child),
+      );
+    },
+    child: KeyedSubtree(
+      key: ValueKey(_starting ? 'startup-stage' : 'main-stage'),
+      child: RepaintBoundary(child: _buildContent(context)),
+    ),
+  );
+
+  Widget _buildContent(BuildContext context) {
     if (_starting) {
       return NonaStartupScreen(
         status: _startupStatus,
@@ -1422,7 +1447,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 nonaPageRoute<void>(
                   context,
                   InternetRoutingScreen(initialData: _routingData),
-                  animate: false,
                 ),
               );
               if (mounted) unawaited(_loadRoutingSummary());
@@ -1437,7 +1461,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     initialCategory: category,
                     initialData: _routingData,
                   ),
-                  animate: false,
                 ),
               );
               if (mounted) unawaited(_loadRoutingSummary());

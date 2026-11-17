@@ -64,8 +64,7 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
   }
 
   Future<void> _open(Widget page) async {
-    await Navigator.of(context)
-        .push(nonaPageRoute<void>(context, page, animate: false));
+    await Navigator.of(context).push(nonaPageRoute<void>(context, page));
   }
 
   @override

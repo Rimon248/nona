@@ -1,11 +1,57 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nona_client/internet_routing.dart';
 import 'package:nona_client/internet_routing_screen.dart';
+import 'package:nona_client/nona_page_route.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('nona.app_routing');
+
+  testWidgets('routing page opens before its list is populated', (
+    tester,
+  ) async {
+    const data = InternetRoutingState(
+      apps: [],
+      sites: [],
+      appCatalogue: {},
+      policy: InternetPolicy(
+        sitesMode: DirectMode.off,
+        appsMode: DirectMode.off,
+        siteOverrides: {},
+        appOverrides: {},
+        customSites: ['example.ru'],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                nonaPageRoute<void>(
+                  context,
+                  const InternetRoutingScreen(
+                    initialCategory: 'customSites',
+                    initialData: data,
+                  ),
+                ),
+              ),
+              child: const Text('Открыть маршруты'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Открыть маршруты'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(find.text('Свои сайты'), findsOneWidget);
+    expect(find.text('example.ru'), findsNothing);
+    await tester.pumpAndSettle();
+    expect(find.text('example.ru'), findsOneWidget);
+  });
 
   testWidgets('closing the add-site dialog leaves the page usable', (
     tester,

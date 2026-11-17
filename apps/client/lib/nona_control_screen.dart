@@ -452,20 +452,21 @@ class NonaControlScreen extends StatelessWidget {
     );
   }
 
-  Widget _tabTransition(BuildContext context, Widget page) {
-    // Routing lists are expensive to paint; replace them in one frame.
-    if (selectedTab == 1 || MediaQuery.disableAnimationsOf(context)) {
-      return page;
-    }
-    return TweenAnimationBuilder<double>(
-      key: ValueKey('tab-$selectedTab'),
-      tween: Tween(begin: 0.9, end: 1),
-      duration: NonaMotion.quick,
-      builder: (context, opacity, child) =>
-          Opacity(opacity: opacity, child: child),
-      child: page,
-    );
-  }
+  Widget _tabTransition(BuildContext context, Widget page) =>
+      TweenAnimationBuilder<double>(
+        key: ValueKey('tab-$selectedTab'),
+        tween: Tween(begin: 0, end: 1),
+        duration: NonaMotion.duration(context, NonaMotion.page),
+        curve: Curves.easeOutQuart,
+        builder: (context, value, child) => Opacity(
+          opacity: 0.65 + value * 0.35,
+          child: Transform.translate(
+            offset: Offset((1 - value) * 36, (1 - value) * 10),
+            child: child,
+          ),
+        ),
+        child: RepaintBoundary(child: page),
+      );
 
   Widget _mobileStatus(BuildContext context) {
     return RefreshIndicator(
@@ -489,7 +490,12 @@ class NonaControlScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 30),
-            Center(child: _statusRing(context, 224)),
+            Center(
+              child: NonaConnectionPress(
+                enabled: onConnectionTap != null,
+                child: _statusRing(context, 224),
+              ),
+            ),
             const SizedBox(height: 23),
             if (manualConnectionEnabled) ...[
               _connectionSettings(context),
@@ -595,6 +601,8 @@ class NonaControlScreen extends StatelessWidget {
         key: const ValueKey('connection-ring'),
         onTap: onConnectionTap,
         customBorder: const CircleBorder(),
+        splashFactory: NoSplash.splashFactory,
+        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
         child: SizedBox(
           width: size,
           height: size,
@@ -887,7 +895,10 @@ class NonaControlScreen extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  _statusRing(context, 212),
+                  NonaConnectionPress(
+                    enabled: onConnectionTap != null,
+                    child: _statusRing(context, 212),
+                  ),
                   const SizedBox(width: 27),
                   Expanded(
                     child: Column(

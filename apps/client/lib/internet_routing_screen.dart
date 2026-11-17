@@ -37,16 +37,34 @@ class _InternetRoutingScreenState extends State<InternetRoutingScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final data = widget.initialData;
-      if (data == null) {
-        unawaited(_load());
-      } else {
-        setState(() {
-          _data = data;
-          _policy = data.policy;
-        });
+      final animation = ModalRoute.of(context)?.animation;
+      if (animation == null || animation.status == AnimationStatus.completed) {
+        _showInitialData();
+        return;
       }
+      late AnimationStatusListener listener;
+      listener = (status) {
+        if (status != AnimationStatus.completed &&
+            status != AnimationStatus.dismissed) {
+          return;
+        }
+        animation.removeStatusListener(listener);
+        if (status == AnimationStatus.completed && mounted) _showInitialData();
+      };
+      animation.addStatusListener(listener);
     });
+  }
+
+  void _showInitialData() {
+    final data = widget.initialData;
+    if (data == null) {
+      unawaited(_load());
+    } else {
+      setState(() {
+        _data = data;
+        _policy = data.policy;
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -96,7 +114,6 @@ class _InternetRoutingScreenState extends State<InternetRoutingScreen> {
       nonaPageRoute<void>(
         context,
         InternetRoutingScreen(initialCategory: category, initialData: _data),
-        animate: false,
       ),
     );
     if (mounted) unawaited(_load());
