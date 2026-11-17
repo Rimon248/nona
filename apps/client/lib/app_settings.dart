@@ -93,10 +93,12 @@ class NonaSettingsScreen extends StatefulWidget {
     super.key,
     required this.settings,
     required this.onChanged,
+    this.embedded = false,
   });
 
   final NonaSettings settings;
   final ValueChanged<NonaSettings> onChanged;
+  final bool embedded;
 
   @override
   State<NonaSettingsScreen> createState() => _NonaSettingsScreenState();
@@ -105,16 +107,23 @@ class NonaSettingsScreen extends StatefulWidget {
 class _NonaSettingsScreenState extends State<NonaSettingsScreen> {
   late NonaSettings settings = widget.settings;
 
+  @override
+  void didUpdateWidget(covariant NonaSettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.settings != widget.settings) settings = widget.settings;
+  }
+
   void change(NonaSettings value) {
     setState(() => settings = value);
     widget.onChanged(value);
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Настройки')),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
+  Widget build(BuildContext context) {
+    final content = ListView(
+      shrinkWrap: widget.embedded,
+      physics: widget.embedded ? const NeverScrollableScrollPhysics() : null,
+      padding: widget.embedded ? EdgeInsets.zero : const EdgeInsets.all(20),
       children: [
         if (defaultTargetPlatform == TargetPlatform.android) ...[
           const Text(
@@ -224,6 +233,12 @@ class _NonaSettingsScreenState extends State<NonaSettingsScreen> {
           ),
         ],
       ],
-    ),
-  );
+    );
+    return widget.embedded
+        ? content
+        : Scaffold(
+            appBar: AppBar(title: const Text('Настройки')),
+            body: content,
+          );
+  }
 }

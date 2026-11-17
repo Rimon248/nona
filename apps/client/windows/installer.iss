@@ -34,7 +34,7 @@ Name: "{group}\Нона"; Filename: "{app}\nona_client.exe"; WorkingDir: "{app}"
 Name: "{commondesktop}\Нона"; Filename: "{app}\nona_client.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\nona_client.exe"; Description: "Запустить Нону"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\nona_client.exe"; Description: "Запустить Нону"; Flags: postinstall skipifsilent shellexec runasoriginaluser
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -44,6 +44,7 @@ class NonaControlScreen extends StatelessWidget {
     required this.onSelectTransport,
     this.connectionPicker = ConnectionPickerMode.both,
     this.onOpenSettings,
+    this.settingsContent,
     this.routingSummary,
     this.routingLoadFailed = false,
     this.country,
@@ -92,6 +93,7 @@ class NonaControlScreen extends StatelessWidget {
   final ValueChanged<PreferredTransport> onSelectTransport;
   final ConnectionPickerMode connectionPicker;
   final VoidCallback? onOpenSettings;
+  final Widget? settingsContent;
   final int? latencyMs;
   final String? latencyMessage;
   final String? username;
@@ -751,6 +753,10 @@ class NonaControlScreen extends StatelessWidget {
               _bottomItem(context, 'Маршруты', Icons.alt_route_rounded, 1),
               const SizedBox(width: 6),
               _bottomItem(context, 'Аккаунт', Icons.person_rounded, 2),
+              if (settingsContent != null) ...[
+                const SizedBox(width: 6),
+                _bottomItem(context, 'Настройки', Icons.settings_outlined, 3),
+              ],
             ],
           ),
         ],
@@ -764,7 +770,7 @@ class NonaControlScreen extends StatelessWidget {
     IconData icon,
     int index,
   ) {
-    final selected = selectedTab == index || (selectedTab == 3 && index == 2);
+    final selected = selectedTab == index;
     return Expanded(
       child: Semantics(
         button: true,
@@ -847,11 +853,20 @@ class NonaControlScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _brand(),
-              const SizedBox(height: 62),
-              _sideItem(context, 'Состояние', 0),
-              _sideItem(context, 'Маршруты', 1),
-              _sideItem(context, 'Аккаунт', 2),
-              const Spacer(),
+              const SizedBox(height: 40),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    _sideItem(context, 'Состояние', 0),
+                    _sideItem(context, 'Маршруты', 1),
+                    _sideItem(context, 'Аккаунт', 2),
+                    if (settingsContent != null)
+                      _sideItem(context, 'Настройки', 3),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
               const Text(
                 'Виртуальный помощник Нона',
                 style: TextStyle(color: NonaColor.muted, fontSize: 12),
@@ -860,22 +875,29 @@ class NonaControlScreen extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: onRefresh,
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(46, 36, 46, 32),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: MediaQuery.sizeOf(context).height - 68,
-                ),
-                child: _tabTransition(
-                  context,
-                  selectedTab == 0
-                      ? _desktopStatus(context)
-                      : _desktopDetail(context),
-                  fillViewport: false,
-                ),
+          child: ClipRect(
+            child: AnimatedSwitcher(
+              duration: NonaMotion.duration(context, NonaMotion.page),
+              layoutBuilder: (currentChild, previousChildren) => Stack(
+                fit: StackFit.expand,
+                children: [...previousChildren, ?currentChild],
+              ),
+              transitionBuilder: (child, animation) {
+                final curved = CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeInOutCubic,
+                );
+                return FadeTransition(
+                  opacity: curved,
+                  child: ScaleTransition(
+                    scale: Tween<double>(begin: 0.975, end: 1).animate(curved),
+                    child: RepaintBoundary(child: child),
+                  ),
+                );
+              },
+              child: KeyedSubtree(
+                key: ValueKey('desktop-tab-$selectedTab'),
+                child: _desktopPage(context),
               ),
             ),
           ),
@@ -883,6 +905,17 @@ class NonaControlScreen extends StatelessWidget {
       ],
     );
   }
+
+  Widget _desktopPage(BuildContext context) => RefreshIndicator(
+    onRefresh: onRefresh,
+    child: SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(46, 36, 46, 32),
+      child: selectedTab == 0
+          ? _desktopStatus(context)
+          : _desktopDetail(context),
+    ),
+  );
 
   Widget _sideItem(BuildContext context, String label, int index) => InkWell(
     onTap: () => onSelectTab(index),
@@ -1200,7 +1233,8 @@ class NonaControlScreen extends StatelessWidget {
           _Eyebrow(switch (selectedTab) {
             1 => 'Главная / Маршруты',
             2 => 'Главная / Аккаунт',
-            _ => 'Главная / Аккаунт',
+            3 => 'Главная / Настройки',
+            _ => 'Главная / Состояние',
           }),
           const Spacer(),
           const NonaFace(size: 34),
@@ -1214,6 +1248,7 @@ class NonaControlScreen extends StatelessWidget {
   Widget _detailContent(BuildContext context) => switch (selectedTab) {
     1 => _routesContent(context),
     2 => _accountContent(context),
+    3 => settingsContent ?? _accountContent(context),
     _ => _accountContent(context),
   };
 
@@ -1568,7 +1603,7 @@ class NonaControlScreen extends StatelessWidget {
           ),
         ),
       ],
-      if (onOpenSettings != null) ...[
+      if (onOpenSettings != null && settingsContent == null) ...[
         const SizedBox(height: 18),
         SizedBox(
           width: double.infinity,

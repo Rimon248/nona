@@ -563,7 +563,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final transportName = await _preferences.getString('preferred_transport');
       final platformSettings =
           defaultTargetPlatform == TargetPlatform.android ||
-              defaultTargetPlatform == TargetPlatform.windows
+              defaultTargetPlatform == TargetPlatform.windows ||
+              defaultTargetPlatform == TargetPlatform.macOS
           ? await NonaSettings.load(_preferences)
           : null;
       final manualEnabled = platformSettings != null
@@ -626,11 +627,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _saveWindowsSettings(NonaSettings settings) async {
+  Future<void> _saveDesktopSettings(NonaSettings settings) async {
     final updateAutoStart =
-        settings.windowsAutoStart != _settings.windowsAutoStart ||
-        (settings.windowsAutoStart &&
-            settings.windowsStartHidden != _settings.windowsStartHidden);
+        defaultTargetPlatform == TargetPlatform.windows &&
+        (settings.windowsAutoStart != _settings.windowsAutoStart ||
+            (settings.windowsAutoStart &&
+                settings.windowsStartHidden != _settings.windowsStartHidden));
     setState(() {
       _settings = settings;
       _manualConnectionEnabled =
@@ -841,7 +843,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _selectTab(int tab) {
-    if (tab < 0 || tab > 2) return;
+    final desktop =
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    if (tab < 0 || tab > (desktop ? 3 : 2)) return;
     setState(() {
       _previousTab = _selectedTab;
       _selectedTab = tab;
@@ -1654,6 +1659,9 @@ class _HomeScreenState extends State<HomeScreen> {
         : !_hasUsableConfiguration
         ? _configurationMessage
         : null;
+    final desktopPlatform =
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS;
     return NonaControlScreen(
       selectedTab: _selectedTab,
       previousTab: _previousTab,
@@ -1711,23 +1719,25 @@ class _HomeScreenState extends State<HomeScreen> {
       selectedTransport: _selectedTransport,
       manualConnectionEnabled: _manualConnectionEnabled,
       connectionPicker:
-          defaultTargetPlatform == TargetPlatform.android ||
-              defaultTargetPlatform == TargetPlatform.windows
+          defaultTargetPlatform == TargetPlatform.android || desktopPlatform
           ? _settings.connectionPicker
           : ConnectionPickerMode.both,
-      onOpenSettings:
-          defaultTargetPlatform == TargetPlatform.android ||
-              defaultTargetPlatform == TargetPlatform.windows
+      settingsContent: desktopPlatform
+          ? NonaSettingsScreen(
+              settings: _settings,
+              embedded: true,
+              onChanged: (value) => unawaited(_saveDesktopSettings(value)),
+            )
+          : null,
+      onOpenSettings: desktopPlatform
+          ? () => _selectTab(3)
+          : defaultTargetPlatform == TargetPlatform.android
           ? () => Navigator.of(context).push(
               nonaPageRoute<void>(
                 context,
                 NonaSettingsScreen(
                   settings: _settings,
-                  onChanged: (value) => unawaited(
-                    defaultTargetPlatform == TargetPlatform.windows
-                        ? _saveWindowsSettings(value)
-                        : _saveAndroidSettings(value),
-                  ),
+                  onChanged: (value) => unawaited(_saveAndroidSettings(value)),
                 ),
               ),
             )
