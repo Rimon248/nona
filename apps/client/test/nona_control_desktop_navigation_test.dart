@@ -21,6 +21,8 @@ void main() {
         home: StatefulBuilder(
           builder: (context, update) => NonaControlScreen(
             selectedTab: selectedTab,
+            appVersion: '0.1.6',
+            engineVersion: '26.10.31',
             previousTab: 0,
             cardSortEntrance: false,
             onSelectTab: (tab) => update(() => selectedTab = tab),
@@ -58,6 +60,11 @@ void main() {
         ),
       ),
     );
+
+    await tester.tap(find.text('Аккаунт'));
+    await tester.pumpAndSettle();
+    expect(find.text('0.1.6'), findsOneWidget);
+    expect(find.text('26.10.31'), findsOneWidget);
 
     await tester.tap(find.text('Настройки'));
     await tester.pumpAndSettle();

@@ -9,10 +9,16 @@ import 'nona_motion.dart';
 
 /// The same composition as the approved phone and desktop loading mockups.
 class NonaStartupScreen extends StatefulWidget {
-  const NonaStartupScreen({super.key, required this.status, this.figure});
+  const NonaStartupScreen({
+    super.key,
+    required this.status,
+    this.figure,
+    this.appVersion,
+  });
 
   final String status;
   final ui.Image? figure;
+  final String? appVersion;
 
   @override
   State<NonaStartupScreen> createState() => _NonaStartupScreenState();
@@ -158,6 +164,18 @@ class _NonaStartupScreenState extends State<NonaStartupScreen> {
                   ],
                 ),
               ),
+              if (widget.appVersion case final version?)
+                Positioned(
+                  left: mobile ? 31 * scale : 73 * scale,
+                  bottom: (mobile ? 13 : 22) * scale,
+                  child: Text(
+                    'Версия $version',
+                    style: TextStyle(
+                      fontSize: (mobile ? 12 : 13) * scale,
+                      color: NonaColor.muted,
+                    ),
+                  ),
+                ),
             ],
           );
         },

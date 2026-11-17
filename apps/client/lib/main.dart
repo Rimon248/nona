@@ -136,6 +136,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _installingMacHelper = false;
   bool _windowsExiting = false;
   String? _lastWindowsTrayState;
+  String? _installedAppVersion;
+  String? _installedEngineVersion;
 
   static const MethodChannel _windowChannel = MethodChannel('nona.window');
   static const MethodChannel _androidUiChannel = MethodChannel(
@@ -156,6 +158,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    if (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.windows) {
+      unawaited(_loadInstalledVersions());
+    }
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       unawaited(_refreshMacHelperState());
     }
@@ -259,6 +265,21 @@ class _HomeScreenState extends State<HomeScreen> {
         unawaited(_checkUpdates());
       }
     });
+  }
+
+  Future<void> _loadInstalledVersions() async {
+    try {
+      final package = await PackageInfo.fromPlatform();
+      final engine = (await rootBundle.loadString('assets/engine-version.txt'))
+          .trim();
+      if (!mounted) return;
+      setState(() {
+        _installedAppVersion = package.version;
+        _installedEngineVersion = engine;
+      });
+    } catch (_) {
+      // The app remains usable if version metadata is unavailable.
+    }
   }
 
   @override
@@ -1563,6 +1584,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return NonaStartupScreen(
         status: _startupStatus,
         figure: widget.startupFigure,
+        appVersion: _installedAppVersion,
       );
     }
     final message = _message;
@@ -1664,6 +1686,8 @@ class _HomeScreenState extends State<HomeScreen> {
         defaultTargetPlatform == TargetPlatform.macOS;
     return NonaControlScreen(
       selectedTab: _selectedTab,
+      appVersion: _installedAppVersion,
+      engineVersion: _installedEngineVersion,
       previousTab: _previousTab,
       cardSortEntrance: _cardSortEntrance,
       onSelectTab: _selectTab,

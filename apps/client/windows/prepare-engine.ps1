@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$version = '26.10.31'
+$version = (Get-Content (Join-Path $PSScriptRoot '../assets/engine-version.txt') -Raw).Trim()
 $libXrayHash = '9A3B1548667836A42B48BB0E37505726D4CD72E8429182E870B92DF4CC8172F3'
 $xrayHash = '2E04A9995A6F2AD1B28C0BB25C708ECB2695E43A1C9C7889C4B6AC2B48CF7A6A'
 $work = Join-Path $env:TEMP "nona-engine-$version"

@@ -14,6 +14,8 @@ class NonaControlScreen extends StatelessWidget {
   const NonaControlScreen({
     super.key,
     required this.selectedTab,
+    this.appVersion,
+    this.engineVersion,
     required this.previousTab,
     required this.cardSortEntrance,
     required this.onSelectTab,
@@ -59,6 +61,8 @@ class NonaControlScreen extends StatelessWidget {
   });
 
   final int selectedTab;
+  final String? appVersion;
+  final String? engineVersion;
   final int previousTab;
   final bool cardSortEntrance;
   final ValueChanged<int> onSelectTab;
@@ -1617,6 +1621,13 @@ class NonaControlScreen extends StatelessWidget {
       if (busy) ...[
         const SizedBox(height: 20),
         const LinearProgressIndicator(),
+      ],
+      if (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.windows) ...[
+        const SizedBox(height: 28),
+        const _Eyebrow('Установлено на устройстве'),
+        _detailRow('Версия Ноны', appVersion ?? 'Определяем…'),
+        _detailRow('Версия ядра VPN', engineVersion ?? 'Определяем…'),
       ],
     ],
   );

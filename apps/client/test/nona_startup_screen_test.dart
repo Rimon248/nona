@@ -25,6 +25,7 @@ void main() {
         home: NonaStartupScreen(
           status: 'Проверяем вход и настройки',
           figure: figure,
+          appVersion: '0.1.6',
         ),
       ),
     );
@@ -46,6 +47,7 @@ void main() {
           home: NonaStartupScreen(
             status: 'Проверяем вход и настройки',
             figure: figure,
+            appVersion: '0.1.6',
           ),
         ),
       );
@@ -54,6 +56,7 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('Встречаемся\nчерез мгновение.'), findsOneWidget);
       expect(find.text('Проверяем вход и настройки'), findsOneWidget);
+      expect(find.text('Версия 0.1.6'), findsOneWidget);
     });
   }
 }
