@@ -30,7 +30,7 @@ class MainActivity : FlutterFragmentActivity() {
         pendingQuickAction = quickAction(intent)
         super.onCreate(savedInstanceState)
         UpdateCheckJob.schedule(this)
-        NonaWidgetProvider.updateAll(this)
+        NonaPresentation.refreshWidgets(this)
     }
 
     override fun onNewIntent(intent: Intent) {

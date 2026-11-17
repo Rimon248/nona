@@ -220,10 +220,12 @@ class NonaVpnService : VpnService() {
         }
         generation++
         state = "connecting"
-        NonaPresentation.publishVpn(this)
-        NonaPresentation.restoreCountry(this)
         cancelled = false
-        worker.execute { connect(profile, startId, autoPing) }
+        NonaPresentation.refreshWidgets(this)
+        worker.execute {
+            try { NonaPresentation.restoreCountry(this) } catch (_: Exception) { }
+            connect(profile, startId, autoPing)
+        }
         return START_NOT_STICKY
     }
 

@@ -613,6 +613,7 @@ class NonaControlScreen extends StatelessWidget {
                 size: size,
                 state: vpnState,
                 unavailable: unavailable,
+                loading: busy || measuringLatency || vpnState == 'connecting',
               ),
               Column(
                 mainAxisSize: MainAxisSize.min,

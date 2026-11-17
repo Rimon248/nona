@@ -927,6 +927,10 @@ class _HomeScreenState extends State<HomeScreen> {
     List<int>? seed;
     var measureOnConnect = false;
     try {
+      await Future.any<void>([
+        WidgetsBinding.instance.endOfFrame,
+        Future<void>.delayed(const Duration(milliseconds: 80)),
+      ]);
       try {
         await auth.refreshAccountStatus();
       } catch (_) {}

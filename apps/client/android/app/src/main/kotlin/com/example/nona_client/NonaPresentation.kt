@@ -9,8 +9,26 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 internal object NonaPresentation {
+    private val widgetExecutor = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "nona-widget-refresh").apply { isDaemon = true }
+    }
+    private var pendingWidgetRefresh: ScheduledFuture<*>? = null
+
+    fun refreshWidgets(context: Context) {
+        val app = context.applicationContext
+        synchronized(this) {
+            pendingWidgetRefresh?.cancel(false)
+            pendingWidgetRefresh = widgetExecutor.schedule({
+                try { NonaWidgetProvider.updateAll(app) } catch (_: Exception) { }
+            }, 35, TimeUnit.MILLISECONDS)
+        }
+    }
+
     const val vpnId = 1001
     private const val updateId = 1002
     private const val vpnChannel = "nona_vpn"
@@ -29,7 +47,7 @@ internal object NonaPresentation {
             .putBoolean("ping", ping).apply()
         if (!updates) manager(context).cancel(updateId)
         if (NonaVpnService.state == "connected") publishVpn(context)
-        NonaWidgetProvider.updateAll(context)
+        refreshWidgets(context)
     }
 
     fun updatesEnabled(context: Context) =
@@ -162,7 +180,7 @@ internal object NonaPresentation {
         } else {
             manager(context).cancel(vpnId)
         }
-        NonaWidgetProvider.updateAll(context)
+        refreshWidgets(context)
     }
 
     fun showUpdate(context: Context, version: String, tag: String) {

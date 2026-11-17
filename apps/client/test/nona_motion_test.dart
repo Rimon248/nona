@@ -36,27 +36,37 @@ void main() {
     }
   });
 
-  testWidgets('coral dot travels along the connection ring', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: NonaConnectionHalo(
-              size: 180,
-              state: 'connected',
-              unavailable: false,
-            ),
+  testWidgets('coral dot orbits outside only while loading', (tester) async {
+    Widget halo(bool loading) => MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: NonaConnectionHalo(
+            size: 180,
+            state: 'connected',
+            unavailable: false,
+            loading: loading,
           ),
         ),
       ),
     );
+    await tester.pumpWidget(halo(false));
     final dot = find.descendant(
       of: find.byType(NonaStatusDot),
       matching: find.byType(DecoratedBox),
     );
     final start = tester.getCenter(dot);
-    await tester.pump(const Duration(milliseconds: 1500));
+    final ringCenter = tester.getCenter(find.byType(NonaConnectionHalo));
+    expect((start - ringCenter).distance, greaterThan(90));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.getCenter(dot), start);
+
+    await tester.pumpWidget(halo(true));
+    await tester.pump(const Duration(milliseconds: 375));
     expect(tester.getCenter(dot), isNot(start));
+
+    await tester.pumpWidget(halo(false));
+    await tester.pump(const Duration(milliseconds: 350));
+    expect((tester.getCenter(dot) - start).distance, lessThan(0.1));
   });
 
   testWidgets('VPN circle compresses and springs back on press', (

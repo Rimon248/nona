@@ -77,11 +77,13 @@ class NonaConnectionHalo extends StatelessWidget {
     required this.size,
     required this.state,
     required this.unavailable,
+    this.loading = false,
   });
 
   final double size;
   final String state;
   final bool unavailable;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +100,7 @@ class NonaConnectionHalo extends StatelessWidget {
       height: size,
       child: Stack(
         alignment: Alignment.center,
+        clipBehavior: Clip.none,
         children: [
           AnimatedContainer(
             duration: duration,
@@ -117,7 +120,7 @@ class NonaConnectionHalo extends StatelessWidget {
               border: Border.all(color: color.withValues(alpha: 0.48)),
             ),
           ),
-          NonaStatusDot(orbitSize: size),
+          NonaStatusDot(orbitSize: size, active: loading),
         ],
       ),
     );
@@ -125,9 +128,14 @@ class NonaConnectionHalo extends StatelessWidget {
 }
 
 class NonaStatusDot extends StatefulWidget {
-  const NonaStatusDot({super.key, required this.orbitSize});
+  const NonaStatusDot({
+    super.key,
+    required this.orbitSize,
+    required this.active,
+  });
 
   final double orbitSize;
+  final bool active;
 
   @override
   State<NonaStatusDot> createState() => _NonaStatusDotState();
@@ -137,18 +145,46 @@ class _NonaStatusDotState extends State<NonaStatusDot>
     with SingleTickerProviderStateMixin {
   late final AnimationController _orbit = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 6),
+    duration: const Duration(milliseconds: 1500),
     value: 0,
   );
+  bool _spinning = false;
+
+  @override
+  void didUpdateWidget(covariant NonaStatusDot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active != widget.active) _syncMotion();
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _syncMotion();
+  }
+
+  void _syncMotion() {
     if (MediaQuery.disableAnimationsOf(context)) {
       _orbit.stop();
       _orbit.value = 0;
-    } else if (!_orbit.isAnimating) {
+      _spinning = false;
+    } else if (widget.active) {
+      if (_spinning) return;
+      _spinning = true;
       _orbit.repeat();
+    } else {
+      if (!_spinning && !_orbit.isAnimating) return;
+      _spinning = false;
+      _orbit.stop();
+      final target = _orbit.value <= 0.5 ? 0.0 : 1.0;
+      _orbit
+          .animateTo(
+            target,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+          )
+          .whenCompleteOrCancel(() {
+            if (mounted && !widget.active) _orbit.value = 0;
+          });
     }
   }
 
@@ -175,7 +211,7 @@ class _NonaStatusDotState extends State<NonaStatusDot>
     ),
     builder: (context, child) {
       final angle = -math.pi / 3 + _orbit.value * 2 * math.pi;
-      final radius = widget.orbitSize / 2 - 8;
+      final radius = widget.orbitSize / 2 + 8;
       return Transform.translate(
         offset: Offset(radius * math.cos(angle), radius * math.sin(angle)),
         child: child,
