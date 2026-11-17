@@ -919,155 +919,169 @@ class NonaControlScreen extends StatelessWidget {
   Widget _desktopStatus(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      _desktopHeader(),
-      const SizedBox(height: 18),
-      const Text(
-        'Соединение под контролем.',
-        style: TextStyle(
-          color: NonaColor.cream,
-          fontSize: 35,
-          fontWeight: FontWeight.w700,
-          letterSpacing: -1.3,
+      NonaCardSortItem(
+        step: 0,
+        enabled: cardSortEntrance,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _desktopHeader(),
+            const SizedBox(height: 18),
+            const Text(
+              'Соединение под контролем.',
+              style: TextStyle(
+                color: NonaColor.cream,
+                fontSize: 35,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -1.3,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Нона следит за текущим каналом и покажет, когда потребуется действие.',
+              style: TextStyle(color: NonaColor.muted, fontSize: 14),
+            ),
+          ],
         ),
       ),
-      const SizedBox(height: 4),
-      const Text(
-        'Нона следит за текущим каналом и покажет, когда потребуется действие.',
-        style: TextStyle(color: NonaColor.muted, fontSize: 14),
-      ),
       const SizedBox(height: 26),
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 2,
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 25),
-              decoration: const BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: NonaColor.line),
-                  bottom: BorderSide(color: NonaColor.line),
+      NonaCardSortItem(
+        step: 1,
+        enabled: cardSortEntrance,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 25),
+                decoration: const BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: NonaColor.line),
+                    bottom: BorderSide(color: NonaColor.line),
+                  ),
                 ),
-              ),
-              child: Row(
-                children: [
-                  NonaConnectionPress(
-                    enabled: onConnectionTap != null,
-                    child: _statusRing(context, 212),
-                  ),
-                  const SizedBox(width: 27),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _desktopDetailTitle,
-                          style: const TextStyle(
-                            color: NonaColor.cream,
-                            fontSize: 23,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.6,
-                          ),
-                        ),
-                        const SizedBox(height: 9),
-                        Text(
-                          _desktopDetailText,
-                          style: const TextStyle(
-                            color: NonaColor.muted,
-                            fontSize: 14,
-                            height: 1.5,
-                          ),
-                        ),
-                        const SizedBox(height: 25),
-                        FilledButton(
-                          onPressed: onAction,
-                          child: Text(actionLabel),
-                        ),
-                      ],
+                child: Row(
+                  children: [
+                    NonaConnectionPress(
+                      enabled: onConnectionTap != null,
+                      child: _statusRing(context, 212),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 34),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.only(left: 30),
-              decoration: const BoxDecoration(
-                border: Border(left: BorderSide(color: NonaColor.line)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const _Eyebrow('Прямо сейчас'),
-                  const SizedBox(height: 10),
-                  if (manualConnectionEnabled) ...[
-                    _connectionSettings(context),
-                    const SizedBox(height: 8),
-                  ],
-                  _metric(
-                    context,
-                    'Текущий канал',
-                    _channel,
-                    leading: _connected && country != null
-                        ? CountryFlag(country: country)
-                        : null,
-                  ),
-                  _metric(
-                    context,
-                    'Задержка HTTPS',
-                    latencyMs == null ? '—' : '$latencyMs',
-                    unit: 'мс',
-                    warm: latencyMs != null,
-                    loading: measuringLatency,
-                  ),
-                  if (latencyMessage != null)
-                    Text(
-                      latencyMessage!,
-                      style: const TextStyle(
-                        color: NonaColor.muted,
-                        fontSize: 12,
+                    const SizedBox(width: 27),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _desktopDetailTitle,
+                            style: const TextStyle(
+                              color: NonaColor.cream,
+                              fontSize: 23,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.6,
+                            ),
+                          ),
+                          const SizedBox(height: 9),
+                          Text(
+                            _desktopDetailText,
+                            style: const TextStyle(
+                              color: NonaColor.muted,
+                              fontSize: 14,
+                              height: 1.5,
+                            ),
+                          ),
+                          const SizedBox(height: 25),
+                          FilledButton(
+                            onPressed: onAction,
+                            child: Text(actionLabel),
+                          ),
+                        ],
                       ),
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 34),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.only(left: 30),
+                decoration: const BoxDecoration(
+                  border: Border(left: BorderSide(color: NonaColor.line)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _Eyebrow('Прямо сейчас'),
+                    const SizedBox(height: 10),
+                    if (manualConnectionEnabled) ...[
+                      _connectionSettings(context),
+                      const SizedBox(height: 8),
+                    ],
+                    _metric(
+                      context,
+                      'Текущий канал',
+                      _channel,
+                      leading: _connected && country != null
+                          ? CountryFlag(country: country)
+                          : null,
+                    ),
+                    _metric(
+                      context,
+                      'Задержка HTTPS',
+                      latencyMs == null ? '—' : '$latencyMs',
+                      unit: 'мс',
+                      warm: latencyMs != null,
+                      loading: measuringLatency,
+                    ),
+                    if (latencyMessage != null)
+                      Text(
+                        latencyMessage!,
+                        style: const TextStyle(
+                          color: NonaColor.muted,
+                          fontSize: 12,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
       const SizedBox(height: 24),
-      Row(
-        children: [
-          _quickBox(
-            'Сайты напрямую',
-            routingAvailable
-                ? 'Настроить маршруты →'
-                : 'Проверить доступность →',
-            tab: 1,
-          ),
-          const SizedBox(width: 14),
-          _quickBox(
-            'Приложения',
-            routingAvailable
-                ? 'Выбрать прямой маршрут →'
-                : 'Проверить доступность →',
-            tab: 1,
-          ),
-          const SizedBox(width: 14),
-          _quickBox(
-            'Другой канал',
-            _connectionPreview,
-            onTap: nodeOptions.isEmpty
-                ? null
-                : () {
-                    if (!manualConnectionEnabled) {
-                      onManualConnectionChanged(true);
-                    }
-                    _openConnectionSettings(context);
-                  },
-          ),
-        ],
+      NonaCardSortItem(
+        step: 2,
+        enabled: cardSortEntrance,
+        child: Row(
+          children: [
+            _quickBox(
+              'Сайты напрямую',
+              routingAvailable
+                  ? 'Настроить маршруты →'
+                  : 'Проверить доступность →',
+              tab: 1,
+            ),
+            const SizedBox(width: 14),
+            _quickBox(
+              'Приложения',
+              routingAvailable
+                  ? 'Выбрать прямой маршрут →'
+                  : 'Проверить доступность →',
+              tab: 1,
+            ),
+            const SizedBox(width: 14),
+            _quickBox(
+              'Другой канал',
+              _connectionPreview,
+              onTap: nodeOptions.isEmpty
+                  ? null
+                  : connectionPicker == ConnectionPickerMode.hidden
+                  ? onOpenSettings
+                  : () => _openConnectionSettings(context),
+            ),
+          ],
+        ),
       ),
     ],
   );

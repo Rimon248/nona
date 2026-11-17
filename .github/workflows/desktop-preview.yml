@@ -12,7 +12,26 @@ permissions:
   contents: read
 
 jobs:
+  macos-signing:
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        shell: bash
+        env:
+          CERT: ${{ secrets.NONA_MACOS_CERT_P12_BASE64 }}
+          PASSWORD: ${{ secrets.NONA_MACOS_CERT_PASSWORD }}
+        run: |
+          if [[ -n "$CERT" && -n "$PASSWORD" ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          fi
+
   macos:
+    needs: macos-signing
+    if: needs.macos-signing.outputs.ready == 'true'
     runs-on: macos-15
     steps:
       - name: Check out source
@@ -95,9 +114,15 @@ jobs:
           (Get-FileHash dist/nona-windows-preview.zip -Algorithm SHA256).Hash.ToLower() + '  nona-windows-preview.zip' |
             Set-Content dist/nona-windows-preview.zip.sha256
 
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./apps/client/windows/build-installer.ps1 -OutputDirectory dist
+
       - name: Upload Windows preview
         uses: actions/upload-artifact@v7.0.2
         with:
           name: nona-windows-preview
-          path: dist/nona-windows-preview.zip*
+          path: |
+            dist/nona-windows-preview.zip*
+            dist/nona-v*-windows-setup.exe*
           if-no-files-found: error

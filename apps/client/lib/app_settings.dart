@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum ConnectionPickerMode { hidden, country, transport, both }
+
+enum WindowsCloseAction { exit, hide }
 
 class NonaSettings {
   const NonaSettings({
@@ -9,28 +12,43 @@ class NonaSettings {
     this.vpnActions = true,
     this.pingAction = false,
     this.connectionPicker = ConnectionPickerMode.hidden,
+    this.windowsAutoStart = false,
+    this.windowsStartHidden = false,
+    this.windowsCloseAction = WindowsCloseAction.exit,
   });
 
   final bool updateNotifications;
   final bool vpnActions;
   final bool pingAction;
   final ConnectionPickerMode connectionPicker;
+  final bool windowsAutoStart;
+  final bool windowsStartHidden;
+  final WindowsCloseAction windowsCloseAction;
 
   NonaSettings copyWith({
     bool? updateNotifications,
     bool? vpnActions,
     bool? pingAction,
     ConnectionPickerMode? connectionPicker,
+    bool? windowsAutoStart,
+    bool? windowsStartHidden,
+    WindowsCloseAction? windowsCloseAction,
   }) => NonaSettings(
     updateNotifications: updateNotifications ?? this.updateNotifications,
     vpnActions: vpnActions ?? this.vpnActions,
     pingAction: pingAction ?? this.pingAction,
     connectionPicker: connectionPicker ?? this.connectionPicker,
+    windowsAutoStart: windowsAutoStart ?? this.windowsAutoStart,
+    windowsStartHidden: windowsStartHidden ?? this.windowsStartHidden,
+    windowsCloseAction: windowsCloseAction ?? this.windowsCloseAction,
   );
 
   static Future<NonaSettings> load(SharedPreferencesAsync preferences) async {
     final name = await preferences.getString('connection_picker_mode');
-    final oldManual = await preferences.getBool('manual_connection_enabled');
+    final oldManual =
+        await preferences.getBool('manual_connection_enabled') ??
+        await preferences.getBool('manual_connection_enabled_desktop_v2');
+    final closeActionName = await preferences.getString('windows_close_action');
     return NonaSettings(
       updateNotifications:
           await preferences.getBool('notify_app_updates') ?? true,
@@ -42,6 +60,14 @@ class NonaSettings {
             ? ConnectionPickerMode.both
             : ConnectionPickerMode.hidden,
       ),
+      windowsAutoStart:
+          await preferences.getBool('windows_auto_start') ?? false,
+      windowsStartHidden:
+          await preferences.getBool('windows_start_hidden') ?? false,
+      windowsCloseAction: WindowsCloseAction.values.firstWhere(
+        (action) => action.name == closeActionName,
+        orElse: () => WindowsCloseAction.exit,
+      ),
     );
   }
 
@@ -52,6 +78,12 @@ class NonaSettings {
     await preferences.setString(
       'connection_picker_mode',
       connectionPicker.name,
+    );
+    await preferences.setBool('windows_auto_start', windowsAutoStart);
+    await preferences.setBool('windows_start_hidden', windowsStartHidden);
+    await preferences.setString(
+      'windows_close_action',
+      windowsCloseAction.name,
     );
   }
 }
@@ -84,29 +116,31 @@ class _NonaSettingsScreenState extends State<NonaSettingsScreen> {
     body: ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Text(
-          'Уведомления',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
-        ),
-        SwitchListTile.adaptive(
-          title: const Text('Новая версия Ноны'),
-          subtitle: const Text('Сообщать о доступном обновлении'),
-          value: settings.updateNotifications,
-          onChanged: (value) =>
-              change(settings.copyWith(updateNotifications: value)),
-        ),
-        SwitchListTile.adaptive(
-          title: const Text('Кнопки VPN в уведомлении'),
-          subtitle: const Text('Перезапуск и отключение'),
-          value: settings.vpnActions,
-          onChanged: (value) => change(settings.copyWith(vpnActions: value)),
-        ),
-        SwitchListTile.adaptive(
-          title: const Text('Проверка пинга в уведомлении'),
-          subtitle: const Text('Показывать кнопку и последний результат'),
-          value: settings.pingAction,
-          onChanged: (value) => change(settings.copyWith(pingAction: value)),
-        ),
+        if (defaultTargetPlatform == TargetPlatform.android) ...[
+          const Text(
+            'Уведомления',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          ),
+          SwitchListTile.adaptive(
+            title: const Text('Новая версия Ноны'),
+            subtitle: const Text('Сообщать о доступном обновлении'),
+            value: settings.updateNotifications,
+            onChanged: (value) =>
+                change(settings.copyWith(updateNotifications: value)),
+          ),
+          SwitchListTile.adaptive(
+            title: const Text('Кнопки VPN в уведомлении'),
+            subtitle: const Text('Перезапуск и отключение'),
+            value: settings.vpnActions,
+            onChanged: (value) => change(settings.copyWith(vpnActions: value)),
+          ),
+          SwitchListTile.adaptive(
+            title: const Text('Проверка пинга в уведомлении'),
+            subtitle: const Text('Показывать кнопку и последний результат'),
+            value: settings.pingAction,
+            onChanged: (value) => change(settings.copyWith(pingAction: value)),
+          ),
+        ],
         const SizedBox(height: 20),
         const Text(
           'Главная',
@@ -116,26 +150,79 @@ class _NonaSettingsScreenState extends State<NonaSettingsScreen> {
           title: Text('Выбор подключения'),
           subtitle: Text('Какие параметры можно выбирать на главной'),
         ),
-        for (final (mode, label) in [
-          (ConnectionPickerMode.hidden, 'Автоматически'),
-          (ConnectionPickerMode.country, 'Только страна сервера'),
-          (ConnectionPickerMode.transport, 'Только способ подключения'),
-          (ConnectionPickerMode.both, 'Страна и способ подключения'),
-        ])
-          RadioListTile<ConnectionPickerMode>(
-            title: Text(label),
-            value: mode,
-            groupValue: settings.connectionPicker,
-            onChanged: (value) {
-              if (value != null)
-                change(settings.copyWith(connectionPicker: value));
-            },
+        RadioGroup<ConnectionPickerMode>(
+          groupValue: settings.connectionPicker,
+          onChanged: (value) =>
+              change(settings.copyWith(connectionPicker: value)),
+          child: Column(
+            children: [
+              for (final (mode, label) in [
+                (ConnectionPickerMode.hidden, 'Автоматически'),
+                (ConnectionPickerMode.country, 'Только страна сервера'),
+                (ConnectionPickerMode.transport, 'Только способ подключения'),
+                (ConnectionPickerMode.both, 'Страна и способ подключения'),
+              ])
+                RadioListTile<ConnectionPickerMode>(
+                  title: Text(label),
+                  value: mode,
+                ),
+            ],
           ),
-        const SizedBox(height: 12),
-        const Text(
-          'Для уведомлений об обновлениях разрешите уведомления Ноны в Android. Состояние активного VPN отображается в системной области.',
-          style: TextStyle(fontSize: 13),
         ),
+        if (defaultTargetPlatform == TargetPlatform.windows) ...[
+          const SizedBox(height: 20),
+          const Text(
+            'Windows',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          ),
+          SwitchListTile.adaptive(
+            title: const Text('Запускать вместе с Windows'),
+            value: settings.windowsAutoStart,
+            onChanged: (value) =>
+                change(settings.copyWith(windowsAutoStart: value)),
+          ),
+          SwitchListTile.adaptive(
+            title: const Text('Скрывать окно при запуске Windows'),
+            subtitle: const Text(
+              'Нона останется доступной через значок в трее',
+            ),
+            value: settings.windowsStartHidden,
+            onChanged: settings.windowsAutoStart
+                ? (value) =>
+                      change(settings.copyWith(windowsStartHidden: value))
+                : null,
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'При нажатии на крестик окна',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+          ),
+          RadioGroup<WindowsCloseAction>(
+            groupValue: settings.windowsCloseAction,
+            onChanged: (value) =>
+                change(settings.copyWith(windowsCloseAction: value)),
+            child: const Column(
+              children: [
+                RadioListTile<WindowsCloseAction>(
+                  title: Text('Выключить Нону и VPN'),
+                  value: WindowsCloseAction.exit,
+                ),
+                RadioListTile<WindowsCloseAction>(
+                  title: Text('Скрыть окно, оставить VPN включённым'),
+                  subtitle: Text('Нона продолжит работать в трее'),
+                  value: WindowsCloseAction.hide,
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (defaultTargetPlatform == TargetPlatform.android) ...[
+          const SizedBox(height: 12),
+          const Text(
+            'Для уведомлений об обновлениях разрешите уведомления Ноны в Android. Состояние активного VPN отображается в системной области.',
+            style: TextStyle(fontSize: 13),
+          ),
+        ],
       ],
     ),
   );

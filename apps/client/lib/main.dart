@@ -42,9 +42,7 @@ import 'nona_startup_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (defaultTargetPlatform == TargetPlatform.android) {
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-    ]);
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   }
   ui.Image? startupFigure;
   try {
@@ -136,6 +134,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _startupStatus = 'Проверяем вход и настройки';
   String _macHelperState = 'checking';
   bool _installingMacHelper = false;
+  bool _windowsExiting = false;
+  String? _lastWindowsTrayState;
 
   static const MethodChannel _windowChannel = MethodChannel('nona.window');
   static const MethodChannel _androidUiChannel = MethodChannel(
@@ -161,6 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (defaultTargetPlatform == TargetPlatform.windows) {
       _windowChannel.setMethodCallHandler(_handleWindowCall);
+      unawaited(_loadWindowsSettings());
     }
     if (defaultTargetPlatform == TargetPlatform.android) {
       _androidUiChannel.setMethodCallHandler(_handleAndroidAction);
@@ -313,7 +314,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleWindowCall(MethodCall call) async {
+    if (call.method == 'trayAction') {
+      await _handleWindowsTrayAction(call.arguments as String? ?? '');
+      return;
+    }
     if (call.method != 'requestExit') return;
+    if (_settings.windowsCloseAction == WindowsCloseAction.hide) {
+      await _windowChannel.invokeMethod<void>('hideWindow');
+      return;
+    }
+    await _exitWindows();
+  }
+
+  Future<void> _exitWindows() async {
+    if (_windowsExiting) return;
+    _windowsExiting = true;
     while (_busy && mounted) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
@@ -326,6 +341,62 @@ class _HomeScreenState extends State<HomeScreen> {
     await _windowChannel.invokeMethod<void>(
       _vpnState == 'idle' ? 'exitNow' : 'cancelExit',
     );
+    _windowsExiting = false;
+  }
+
+  Future<void> _handleWindowsTrayAction(String action) async {
+    if (!mounted) return;
+    if (action == 'show') {
+      await _windowChannel.invokeMethod<void>('showWindow');
+      return;
+    }
+    if (action == 'quit') {
+      await _exitWindows();
+      return;
+    }
+    if (_starting || _busy) return;
+    if (action == 'connect' || action == 'restart') {
+      await _handleQuickAction(action == 'connect' ? 'CONNECT' : 'RESTART');
+      if (_vpnState != 'connected') {
+        await _windowChannel.invokeMethod<void>('showWindow');
+      }
+      return;
+    }
+    if (action == 'disconnect') {
+      if (_vpnState == 'connected') await _disconnectVpn();
+      return;
+    }
+    if (action == 'ping') {
+      await _measureVpnLatency();
+      return;
+    }
+    if (action.startsWith('node:') &&
+        _settings.connectionPicker != ConnectionPickerMode.hidden &&
+        _settings.connectionPicker != ConnectionPickerMode.transport) {
+      final id = action.substring(5);
+      if (id.isNotEmpty && !_availableNodes.any((node) => node.id == id)) {
+        return;
+      }
+      if ((id.isEmpty ? null : id) == _selectedNodeId) return;
+      await _selectNode(id.isEmpty ? null : id);
+      if (_vpnState == 'connected') await _handleQuickAction('RESTART');
+      return;
+    }
+    if (action.startsWith('transport:') &&
+        _settings.connectionPicker != ConnectionPickerMode.hidden &&
+        _settings.connectionPicker != ConnectionPickerMode.country) {
+      final name = action.substring(10);
+      final selected = PreferredTransport.values.where(
+        (value) => value.name == name,
+      );
+      if (selected.isEmpty || selected.first == _selectedTransport) return;
+      final node = _availableNodes.where(
+        (value) => value.id == _selectedNodeId,
+      );
+      if (node.isNotEmpty && !node.first.supports(selected.first)) return;
+      await _selectTransport(selected.first);
+      if (_vpnState == 'connected') await _handleQuickAction('RESTART');
+    }
   }
 
   Future<void> _refreshMacHelperState() async {
@@ -382,7 +453,8 @@ class _HomeScreenState extends State<HomeScreen> {
           platform: defaultTargetPlatform,
         );
         if (update != null &&
-            await _preferences.getString('dismissed_update_tag') == update.tag) {
+            await _preferences.getString('dismissed_update_tag') ==
+                update.tag) {
           update = null;
         }
       } catch (_) {
@@ -489,26 +561,28 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final nodeId = await _preferences.getString('preferred_node_id');
       final transportName = await _preferences.getString('preferred_transport');
-      final androidSettings = defaultTargetPlatform == TargetPlatform.android
+      final platformSettings =
+          defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.windows
           ? await NonaSettings.load(_preferences)
           : null;
-      final manualEnabled = androidSettings != null
-          ? androidSettings.connectionPicker != ConnectionPickerMode.hidden
+      final manualEnabled = platformSettings != null
+          ? platformSettings.connectionPicker != ConnectionPickerMode.hidden
           : await _preferences.getBool(_manualPreferenceKey) ?? true;
       final lastNodeId = await _preferences.getString('last_connected_node_id');
       if (!mounted) return;
       setState(() {
         _manualConnectionEnabled = manualEnabled;
-        if (androidSettings != null) _settings = androidSettings;
+        if (platformSettings != null) _settings = platformSettings;
         _selectedNodeId =
             manualEnabled &&
-                androidSettings?.connectionPicker !=
+                platformSettings?.connectionPicker !=
                     ConnectionPickerMode.transport
             ? nodeId
             : null;
         _selectedTransport =
             manualEnabled &&
-                androidSettings?.connectionPicker !=
+                platformSettings?.connectionPicker !=
                     ConnectionPickerMode.country
             ? PreferredTransport.values.firstWhere(
                 (value) => value.name == transportName,
@@ -535,6 +609,63 @@ class _HomeScreenState extends State<HomeScreen> {
       await _androidUiChannel.invokeMethod<void>(
         'requestNotificationPermission',
       );
+    }
+  }
+
+  Future<void> _loadWindowsSettings() async {
+    try {
+      final settings = await NonaSettings.load(_preferences);
+      if (!mounted) return;
+      setState(() {
+        _settings = settings;
+        _manualConnectionEnabled =
+            settings.connectionPicker != ConnectionPickerMode.hidden;
+      });
+    } catch (_) {
+      // Keep the default settings if the platform store is unavailable.
+    }
+  }
+
+  Future<void> _saveWindowsSettings(NonaSettings settings) async {
+    final updateAutoStart =
+        settings.windowsAutoStart != _settings.windowsAutoStart ||
+        (settings.windowsAutoStart &&
+            settings.windowsStartHidden != _settings.windowsStartHidden);
+    setState(() {
+      _settings = settings;
+      _manualConnectionEnabled =
+          settings.connectionPicker != ConnectionPickerMode.hidden;
+      if (settings.connectionPicker == ConnectionPickerMode.hidden ||
+          settings.connectionPicker == ConnectionPickerMode.transport) {
+        _selectedNodeId = null;
+      }
+      if (settings.connectionPicker == ConnectionPickerMode.hidden ||
+          settings.connectionPicker == ConnectionPickerMode.country) {
+        _selectedTransport = PreferredTransport.automatic;
+      }
+    });
+    await settings.save(_preferences);
+    await _preferences.setBool(_manualPreferenceKey, _manualConnectionEnabled);
+    if (_selectedNodeId == null) await _preferences.remove('preferred_node_id');
+    await _preferences.setString(
+      'preferred_transport',
+      _selectedTransport.name,
+    );
+    if (updateAutoStart) {
+      try {
+        await _windowChannel.invokeMethod<void>('setAutoStart', {
+          'enabled': settings.windowsAutoStart,
+          'hidden': settings.windowsStartHidden,
+        });
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Не удалось изменить запуск вместе с Windows'),
+            ),
+          );
+        }
+      }
     }
   }
 
@@ -1353,26 +1484,74 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _scheduleWindowsTrayUpdate() {
+    final node = _availableNodes.where((item) => item.id == _selectedNodeId);
+    final transports = node.isEmpty
+        ? _availableNodes.expand((item) => item.transports).toSet()
+        : node.first.transports;
+    final state = <String, Object?>{
+      'vpnState': _vpnState,
+      'busy': _busy || _starting,
+      'canConnect':
+          !_starting &&
+          canStartVpn(
+            busy: _busy,
+            vpnState: _vpnState,
+            accessStatus: _auth?.vpnAccessStatus,
+            hasConfiguration: _hasUsableConfiguration,
+          ),
+      'country': _vpnCountry ?? '',
+      'latency': _latencyMs,
+      'picker': _settings.connectionPicker.name,
+      'selectedNode': _selectedNodeId ?? '',
+      'selectedTransport': _selectedTransport.name,
+      'nodes': [
+        for (final item in _availableNodes)
+          {'id': item.id, 'country': item.country},
+      ],
+      'transports': [
+        if (transports.contains('hysteria2')) 'hysteria2',
+        if (transports.contains('vless-reality')) 'vlessReality',
+      ],
+    };
+    final encoded = jsonEncode(state);
+    if (encoded == _lastWindowsTrayState) return;
+    _lastWindowsTrayState = encoded;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        await _windowChannel.invokeMethod<void>('updateTray', state);
+      } catch (_) {
+        _lastWindowsTrayState = null;
+      }
+    });
+  }
+
   @override
-  Widget build(BuildContext context) => AnimatedSwitcher(
-    duration: NonaMotion.duration(context, NonaMotion.startup),
-    reverseDuration: NonaMotion.duration(
-      context,
-      const Duration(milliseconds: 380),
-    ),
-    layoutBuilder: (currentChild, previousChildren) => Stack(
-      fit: StackFit.expand,
-      children: [?currentChild, ...previousChildren],
-    ),
-    transitionBuilder: (child, animation) =>
-        child.key == const ValueKey('main-stage')
-        ? child
-        : FadeTransition(opacity: animation, child: child),
-    child: KeyedSubtree(
-      key: ValueKey(_starting ? 'startup-stage' : 'main-stage'),
-      child: RepaintBoundary(child: _buildContent(context)),
-    ),
-  );
+  Widget build(BuildContext context) {
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      _scheduleWindowsTrayUpdate();
+    }
+    return AnimatedSwitcher(
+      duration: NonaMotion.duration(context, NonaMotion.startup),
+      reverseDuration: NonaMotion.duration(
+        context,
+        const Duration(milliseconds: 380),
+      ),
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        fit: StackFit.expand,
+        children: [?currentChild, ...previousChildren],
+      ),
+      transitionBuilder: (child, animation) =>
+          child.key == const ValueKey('main-stage')
+          ? child
+          : FadeTransition(opacity: animation, child: child),
+      child: KeyedSubtree(
+        key: ValueKey(_starting ? 'startup-stage' : 'main-stage'),
+        child: RepaintBoundary(child: _buildContent(context)),
+      ),
+    );
+  }
 
   Widget _buildContent(BuildContext context) {
     if (_starting) {
@@ -1531,16 +1710,24 @@ class _HomeScreenState extends State<HomeScreen> {
       selectedNodeId: _selectedNodeId,
       selectedTransport: _selectedTransport,
       manualConnectionEnabled: _manualConnectionEnabled,
-      connectionPicker: defaultTargetPlatform == TargetPlatform.android
+      connectionPicker:
+          defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.windows
           ? _settings.connectionPicker
           : ConnectionPickerMode.both,
-      onOpenSettings: defaultTargetPlatform == TargetPlatform.android
+      onOpenSettings:
+          defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.windows
           ? () => Navigator.of(context).push(
               nonaPageRoute<void>(
                 context,
                 NonaSettingsScreen(
                   settings: _settings,
-                  onChanged: (value) => unawaited(_saveAndroidSettings(value)),
+                  onChanged: (value) => unawaited(
+                    defaultTargetPlatform == TargetPlatform.windows
+                        ? _saveWindowsSettings(value)
+                        : _saveAndroidSettings(value),
+                  ),
                 ),
               ),
             )
