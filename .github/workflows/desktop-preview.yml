@@ -111,8 +111,9 @@ jobs:
           }
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path "$bundle/*" -DestinationPath dist/nona-windows-preview.zip -Force
-          (Get-FileHash dist/nona-windows-preview.zip -Algorithm SHA256).Hash.ToLower() + '  nona-windows-preview.zip' |
-            Set-Content dist/nona-windows-preview.zip.sha256
+          $hash = (Get-FileHash dist/nona-windows-preview.zip -Algorithm SHA256).Hash.ToLower()
+          $encoding = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::WriteAllText('dist/nona-windows-preview.zip.sha256', "$hash  nona-windows-preview.zip`n", $encoding)
 
       - name: Build Windows installer
         shell: pwsh
