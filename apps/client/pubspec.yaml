@@ -1,7 +1,7 @@
 name: nona_client
 description: "Виртуальный Помощник Нона: кроссплатформенный VPN-клиент."
 publish_to: 'none'
-version: 0.1.4+5
+version: 0.1.5+6
 
 environment:
   sdk: ^3.13.2
