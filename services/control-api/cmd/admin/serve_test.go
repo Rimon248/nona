@@ -1,9 +1,30 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"nona.example/control-api/internal/auth"
 )
+
+func TestAdminDeviceViewsHidePublicKeysAndKeepRevocation(t *testing.T) {
+	created := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	views := adminDeviceViews([]auth.Device{{
+		ID: "device-1", Label: "Android", PublicKey: "private-device-key",
+		CreatedAt: created, RevokedAt: &created,
+	}})
+	encoded, err := json.Marshal(views)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].RevokedAt == nil ||
+		strings.Contains(string(encoded), "private-device-key") ||
+		!strings.Contains(string(encoded), "revoked_at") {
+		t.Fatalf("invalid admin device view: %s", encoded)
+	}
+}
 
 func TestProvisioningRetryDelay(t *testing.T) {
 	for _, test := range []struct {

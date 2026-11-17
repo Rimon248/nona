@@ -18,7 +18,25 @@ import (
 
 const adminOrigin = "https://nona.server.basketref.ru"
 
-func adminHandler(service *auth.Service, verifier *oidc.Verifier, keycloak *keycloakAdmin, ownerSub string) http.Handler {
+type adminDeviceView struct {
+	ID        string     `json:"id"`
+	Label     string     `json:"label"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at"`
+}
+
+func adminDeviceViews(devices []auth.Device) []adminDeviceView {
+	views := make([]adminDeviceView, 0, len(devices))
+	for _, device := range devices {
+		views = append(views, adminDeviceView{
+			ID: device.ID, Label: device.Label,
+			CreatedAt: device.CreatedAt, RevokedAt: device.RevokedAt,
+		})
+	}
+	return views
+}
+
+func adminHandler(pool *pgxpool.Pool, service *auth.Service, verifier *oidc.Verifier, keycloak *keycloakAdmin, ownerSub string) http.Handler {
 	mux := http.NewServeMux()
 	authorized := func(w http.ResponseWriter, r *http.Request) (oidc.Identity, map[string]bool, bool) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -71,6 +89,59 @@ func adminHandler(service *auth.Service, verifier *oidc.Verifier, keycloak *keyc
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"users": users,
 			"can_manage_operators": identity.Subject == ownerSub, "can_delete_users": identity.Subject == ownerSub})
+	})
+	mux.HandleFunc("GET /admin/api/users/{id}/devices", func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := authorized(w, r); !ok {
+			return
+		}
+		accountID := r.PathValue("id")
+		if _, err := service.OIDCSubject(r.Context(), accountID); err != nil {
+			if errors.Is(err, auth.ErrAccountNotFound) {
+				http.Error(w, "user not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "could not load user", http.StatusInternalServerError)
+			}
+			return
+		}
+		devices, err := service.ListDevices(r.Context(), accountID)
+		if err != nil {
+			http.Error(w, "could not load devices", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"devices": adminDeviceViews(devices)})
+	})
+	mux.HandleFunc("DELETE /admin/api/users/{id}/devices/{device}", func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := authorized(w, r); !ok {
+			return
+		}
+		if r.Header.Get("Origin") != adminOrigin {
+			http.Error(w, "invalid request origin", http.StatusForbidden)
+			return
+		}
+		accountID := r.PathValue("id")
+		if _, err := service.OIDCSubject(r.Context(), accountID); err != nil {
+			if errors.Is(err, auth.ErrAccountNotFound) {
+				http.Error(w, "user not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "could not load user", http.StatusInternalServerError)
+			}
+			return
+		}
+		deviceID := r.PathValue("device")
+		err := service.RevokeDevice(r.Context(), accountID, deviceID, time.Now().UTC())
+		if errors.Is(err, auth.ErrDeviceProvisioned) {
+			err = retireDevice(pool, service, accountID, deviceID)
+		}
+		if err != nil {
+			if errors.Is(err, auth.ErrDeviceNotFound) {
+				http.Error(w, "device not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "could not revoke device", http.StatusBadGateway)
+			}
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /admin/api/users/{id}/access", func(w http.ResponseWriter, r *http.Request) {
 		if _, _, ok := authorized(w, r); !ok {
@@ -423,9 +494,9 @@ func serveAdmin() {
 			time.Sleep(15 * time.Second)
 		}
 	}()
-	server := &http.Server{Addr: "0.0.0.0:8081", Handler: adminHandler(service, verifier, keycloak, ownerSub),
+	server := &http.Server{Addr: "0.0.0.0:8081", Handler: adminHandler(pool, service, verifier, keycloak, ownerSub),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
-		WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second}
+		WriteTimeout: 75 * time.Second, IdleTimeout: 30 * time.Second}
 	log.Print("Nona private admin service listening")
 	log.Fatal(server.ListenAndServe())
 }

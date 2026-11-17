@@ -170,6 +170,9 @@ func (s *Service) revokeDevice(ctx context.Context, accountID, deviceID string, 
 	if _, err := tx.Exec(ctx, `DELETE FROM device_configurations WHERE device_id=$1`, deviceID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM device_provisioning_attempts WHERE device_id=$1`, deviceID); err != nil {
+		return err
+	}
 	if remoteDelete != nil {
 		if _, err := tx.Exec(ctx, `DELETE FROM device_remote_credentials WHERE device_id=$1`, deviceID); err != nil {
 			return err

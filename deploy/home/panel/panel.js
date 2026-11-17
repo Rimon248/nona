@@ -44,7 +44,53 @@ const accessLabels = {
   revoking: 'Отзываем доступ', denied: 'Без доступа',
   deleting: 'Удаляем аккаунт'
 };
+const expandedUsers = new Set();
+const dateFormat = new Intl.DateTimeFormat('ru-RU', {dateStyle: 'medium', timeStyle: 'short'});
+function deviceRow(user, device) {
+  const row = document.createElement('div');
+  row.className = 'device-row';
+  const identity = document.createElement('div');
+  identity.className = 'device-identity';
+  const name = document.createElement('strong');
+  name.textContent = device.label;
+  const detail = document.createElement('small');
+  detail.textContent = `Добавлено ${dateFormat.format(new Date(device.created_at))} · ID ${device.id.slice(0, 8)}`;
+  detail.title = device.id;
+  identity.append(name, detail);
+  const status = document.createElement('span');
+  status.className = `device-status ${device.revoked_at ? 'revoked' : 'active'}`;
+  status.textContent = device.revoked_at
+    ? `Отозвано ${dateFormat.format(new Date(device.revoked_at))}`
+    : 'Активно';
+  row.append(identity, status);
+  if (!device.revoked_at) {
+    const revoke = document.createElement('button');
+    revoke.type = 'button';
+    revoke.className = 'danger';
+    revoke.textContent = 'Отозвать доступ';
+    revoke.addEventListener('click', async () => {
+      if (!confirm(`Отозвать доступ устройства «${device.label}» (ID ${device.id.slice(0, 8)}) у ${user.username}? Его VPN-доступ будет удалён. При новом входе пользователь сможет зарегистрировать устройство снова.`)) return;
+      revoke.disabled = true;
+      revoke.textContent = 'Отзываем…';
+      try {
+        const response = await fetch(`/admin/api/users/${encodeURIComponent(user.id)}/devices/${encodeURIComponent(device.id)}`, {
+          method: 'DELETE', credentials: 'same-origin', cache: 'no-store'
+        });
+        if (!response.ok) throw new Error(String(response.status));
+        await loadUsers();
+      } catch (_) {
+        revoke.disabled = false;
+        revoke.textContent = 'Отозвать доступ';
+        usersMessage.textContent = 'Не удалось отозвать устройство. Проверьте связь с VPN-узлами и повторите попытку.';
+      }
+    });
+    row.append(revoke);
+  }
+  return row;
+}
 function userRow(user, canManageOperators, canDeleteUsers) {
+  const entry = document.createElement('div');
+  entry.className = 'user-entry';
   const row = document.createElement('div');
   row.className = 'user-row';
   const identity = document.createElement('div');
@@ -65,6 +111,49 @@ function userRow(user, canManageOperators, canDeleteUsers) {
     : accessLabels[user.status] || 'Неизвестно';
   const actions = document.createElement('div');
   actions.className = 'user-actions';
+  const devicesButton = document.createElement('button');
+  devicesButton.type = 'button';
+  devicesButton.textContent = 'Устройства';
+  devicesButton.setAttribute('aria-expanded', String(expandedUsers.has(user.id)));
+  devicesButton.setAttribute('aria-controls', `devices-${user.id}`);
+  actions.append(devicesButton);
+  const devicesPanel = document.createElement('div');
+  devicesPanel.id = `devices-${user.id}`;
+  devicesPanel.className = 'devices-panel';
+  devicesPanel.hidden = !expandedUsers.has(user.id);
+  async function loadDevices() {
+    devicesPanel.textContent = 'Загружаем устройства…';
+    try {
+      const data = await readJson(`/admin/api/users/${encodeURIComponent(user.id)}/devices`);
+      if (!Array.isArray(data.devices)) throw new Error('invalid devices');
+      const devices = data.devices.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      const heading = document.createElement('p');
+      heading.className = 'devices-heading';
+      const activeCount = devices.filter(device => !device.revoked_at).length;
+      heading.textContent = `Всего регистраций: ${devices.length} · активных: ${activeCount}`;
+      if (devices.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'devices-empty';
+        empty.textContent = 'Устройств пока нет.';
+        devicesPanel.replaceChildren(heading, empty);
+      } else {
+        const list = document.createElement('div');
+        list.className = 'devices-list';
+        list.replaceChildren(...devices.map(device => deviceRow(user, device)));
+        devicesPanel.replaceChildren(heading, list);
+      }
+    } catch (_) {
+      devicesPanel.textContent = 'Не удалось загрузить устройства. Закройте список и откройте снова.';
+    }
+  }
+  devicesButton.addEventListener('click', () => {
+    const expanded = !expandedUsers.has(user.id);
+    if (expanded) expandedUsers.add(user.id);
+    else expandedUsers.delete(user.id);
+    devicesPanel.hidden = !expanded;
+    devicesButton.setAttribute('aria-expanded', String(expanded));
+    if (expanded) loadDevices();
+  });
   if (user.status === 'pending' || user.status === 'denied') {
     const approve = document.createElement('button');
     approve.type = 'button';
@@ -95,13 +184,18 @@ function userRow(user, canManageOperators, canDeleteUsers) {
     actions.append(remove);
   }
   row.append(identity, status, actions);
-  return row;
+  entry.append(row, devicesPanel);
+  entry.loadDevices = loadDevices;
+  entry.userId = user.id;
+  return entry;
 }
 async function loadUsers() {
   usersButton.disabled = true;
   try {
     const data = await readJson('/admin/api/users');
-    usersList.replaceChildren(...data.users.map(user => userRow(user, data.can_manage_operators, data.can_delete_users)));
+    const rows = data.users.map(user => userRow(user, data.can_manage_operators, data.can_delete_users));
+    usersList.replaceChildren(...rows);
+    rows.filter(row => expandedUsers.has(row.userId)).forEach(row => row.loadDevices());
     usersMessage.textContent = data.users.length === 0
       ? 'Зарегистрированных пользователей пока нет.'
       : `${data.users.length} пользователей`;
