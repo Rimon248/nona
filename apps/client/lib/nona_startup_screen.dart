@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import 'nona_control_theme.dart';
+import 'nona_motion.dart';
 
 /// The same composition as the approved phone and desktop loading mockups.
 class NonaStartupScreen extends StatefulWidget {
@@ -16,16 +18,28 @@ class NonaStartupScreen extends StatefulWidget {
   State<NonaStartupScreen> createState() => _NonaStartupScreenState();
 }
 
-class _NonaStartupScreenState extends State<NonaStartupScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _dots = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1200),
-  )..repeat();
+class _NonaStartupScreenState extends State<NonaStartupScreen> {
+  final ValueNotifier<int> _activeDot = ValueNotifier(0);
+  Timer? _dotTimer;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _dotTimer?.cancel();
+      _dotTimer = null;
+      if (_activeDot.value != 0) _activeDot.value = 0;
+    } else {
+      _dotTimer ??= Timer.periodic(const Duration(milliseconds: 450), (_) {
+        _activeDot.value = (_activeDot.value + 1) % 3;
+      });
+    }
+  }
 
   @override
   void dispose() {
-    _dots.dispose();
+    _dotTimer?.cancel();
+    _activeDot.dispose();
     super.dispose();
   }
 
@@ -95,28 +109,39 @@ class _NonaStartupScreenState extends State<NonaStartupScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    AnimatedBuilder(
-                      animation: _dots,
-                      builder: (context, _) => Row(
-                        children: List.generate(3, (index) {
-                          final active = (_dots.value * 3).floor() == index;
-                          return Padding(
-                            padding: EdgeInsets.only(right: 6 * scale),
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: active
-                                    ? NonaColor.coral
-                                    : NonaColor.muted,
-                              ),
-                              child: SizedBox(
-                                width: (mobile ? 10 : 12) * scale,
-                                height: (mobile ? 10 : 12) * scale,
+                    ValueListenableBuilder<int>(
+                      valueListenable: _activeDot,
+                      builder: (context, active, _) {
+                        final dotSize = (mobile ? 10.0 : 12.0) * scale;
+                        final spacing = 6 * scale;
+                        return SizedBox(
+                          width: dotSize * 3 + spacing * 2,
+                          child: Row(
+                            children: List.generate(
+                              3,
+                              (index) => Padding(
+                                padding: EdgeInsets.only(
+                                  right: index == 2 ? 0 : spacing,
+                                ),
+                                child: AnimatedContainer(
+                                  duration: NonaMotion.duration(
+                                    context,
+                                    NonaMotion.quick,
+                                  ),
+                                  width: dotSize,
+                                  height: dotSize,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: index == active
+                                        ? NonaColor.coral
+                                        : NonaColor.muted,
+                                  ),
+                                ),
                               ),
                             ),
-                          );
-                        }),
-                      ),
+                          ),
+                        );
+                      },
                     ),
                     SizedBox(width: (mobile ? 12 : 25) * scale),
                     Flexible(

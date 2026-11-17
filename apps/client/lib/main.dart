@@ -18,7 +18,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'app_update.dart';
 import 'app_settings.dart';
 import 'connection_selection.dart';
-import 'instant_page_route.dart';
+import 'nona_page_route.dart';
 import 'internet_routing_screen.dart';
 import 'internet_routing.dart';
 import 'routing_summary.dart';
@@ -1419,8 +1419,10 @@ class _HomeScreenState extends State<HomeScreen> {
       onOpenRouting: _vpnControlsAvailable
           ? () async {
               await Navigator.of(context).push(
-                instantPageRoute<void>(
+                nonaPageRoute<void>(
+                  context,
                   InternetRoutingScreen(initialData: _routingData),
+                  animate: false,
                 ),
               );
               if (mounted) unawaited(_loadRoutingSummary());
@@ -1429,11 +1431,13 @@ class _HomeScreenState extends State<HomeScreen> {
       onOpenRouteCategory: _vpnControlsAvailable
           ? (category) async {
               await Navigator.of(context).push(
-                instantPageRoute<void>(
+                nonaPageRoute<void>(
+                  context,
                   InternetRoutingScreen(
                     initialCategory: category,
                     initialData: _routingData,
                   ),
+                  animate: false,
                 ),
               );
               if (mounted) unawaited(_loadRoutingSummary());
@@ -1457,7 +1461,8 @@ class _HomeScreenState extends State<HomeScreen> {
           : ConnectionPickerMode.both,
       onOpenSettings: defaultTargetPlatform == TargetPlatform.android
           ? () => Navigator.of(context).push(
-              instantPageRoute<void>(
+              nonaPageRoute<void>(
+                context,
                 NonaSettingsScreen(
                   settings: _settings,
                   onChanged: (value) => unawaited(_saveAndroidSettings(value)),

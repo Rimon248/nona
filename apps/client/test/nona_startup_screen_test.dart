@@ -15,6 +15,26 @@ void main() {
     figure = (await codec.getNextFrame()).image;
     codec.dispose();
   });
+  testWidgets('loading status stays in place while the dots change', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 780));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NonaStartupScreen(
+          status: 'Проверяем вход и настройки',
+          figure: figure,
+        ),
+      ),
+    );
+    final before = tester.getTopLeft(find.text('Проверяем вход и настройки'));
+    await tester.pump(const Duration(milliseconds: 500));
+    final after = tester.getTopLeft(find.text('Проверяем вход и настройки'));
+    expect(after, before);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final size in [const Size(390, 780), const Size(990, 600)]) {
     testWidgets('startup screen fits ${size.width}x${size.height}', (
       tester,

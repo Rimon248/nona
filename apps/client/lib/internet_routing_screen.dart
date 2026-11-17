@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'android_app_routing.dart';
 import 'delayed_progress_indicator.dart';
-import 'instant_page_route.dart';
+import 'nona_page_route.dart';
 import 'internet_routing.dart';
 import 'nona_control_theme.dart';
 
@@ -93,8 +93,10 @@ class _InternetRoutingScreenState extends State<InternetRoutingScreen> {
 
   Future<void> _openCategory(String category) async {
     await Navigator.of(context).push(
-      instantPageRoute<void>(
+      nonaPageRoute<void>(
+        context,
         InternetRoutingScreen(initialCategory: category, initialData: _data),
+        animate: false,
       ),
     );
     if (mounted) unawaited(_load());

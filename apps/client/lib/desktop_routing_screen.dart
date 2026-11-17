@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'desktop_routing.dart';
+import 'nona_page_route.dart';
 
 typedef _SaveDesktopPolicy = Future<bool> Function(DesktopRoutingPolicy policy);
 
@@ -64,7 +65,7 @@ class _DesktopRoutingScreenState extends State<DesktopRoutingScreen> {
 
   Future<void> _open(Widget page) async {
     await Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => page));
+        .push(nonaPageRoute<void>(context, page, animate: false));
   }
 
   @override

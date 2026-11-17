@@ -8,6 +8,7 @@ import 'app_settings.dart';
 import 'delayed_progress_indicator.dart';
 import 'routing_summary.dart';
 import 'nona_control_theme.dart';
+import 'nona_motion.dart';
 
 class NonaControlScreen extends StatelessWidget {
   const NonaControlScreen({
@@ -438,13 +439,31 @@ class NonaControlScreen extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: selectedTab == 0
-                ? _mobileStatus(context)
-                : _mobileDetail(context),
+            child: _tabTransition(
+              context,
+              selectedTab == 0
+                  ? _mobileStatus(context)
+                  : _mobileDetail(context),
+            ),
           ),
           _mobileDock(context),
         ],
       ),
+    );
+  }
+
+  Widget _tabTransition(BuildContext context, Widget page) {
+    // Routing lists are expensive to paint; replace them in one frame.
+    if (selectedTab == 1 || MediaQuery.disableAnimationsOf(context)) {
+      return page;
+    }
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('tab-$selectedTab'),
+      tween: Tween(begin: 0.9, end: 1),
+      duration: NonaMotion.quick,
+      builder: (context, opacity, child) =>
+          Opacity(opacity: opacity, child: child),
+      child: page,
     );
   }
 
@@ -470,7 +489,7 @@ class NonaControlScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 30),
-            Center(child: _statusRing(224)),
+            Center(child: _statusRing(context, 224)),
             const SizedBox(height: 23),
             if (manualConnectionEnabled) ...[
               _connectionSettings(context),
@@ -522,12 +541,22 @@ class NonaControlScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    latencyMs == null ? '—' : '$latencyMs',
-                    style: const TextStyle(
-                      color: NonaColor.cream,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w400,
+                  SizedBox(
+                    width: 78,
+                    child: AnimatedSwitcher(
+                      duration: NonaMotion.duration(context, NonaMotion.quick),
+                      child: measuringLatency
+                          ? const NonaPingWave(key: ValueKey('ping-measuring'))
+                          : Text(
+                              latencyMs == null ? '—' : '$latencyMs',
+                              key: ValueKey('ping-${latencyMs ?? 'empty'}'),
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                color: NonaColor.cream,
+                                fontSize: 26,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -552,7 +581,7 @@ class NonaControlScreen extends StatelessWidget {
     );
   }
 
-  Widget _statusRing(double size) {
+  Widget _statusRing(BuildContext context, double size) {
     final unavailable =
         onConnectionTap == null &&
         !_connected &&
@@ -572,57 +601,32 @@ class NonaControlScreen extends StatelessWidget {
           child: Stack(
             alignment: Alignment.center,
             children: [
-              Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: unavailable
-                        ? NonaColor.coral
-                        : const Color(0xFF7290A1),
-                    width: unavailable ? 3 : 2,
-                  ),
-                ),
-              ),
-              Container(
-                width: size - 25,
-                height: size - 25,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: unavailable
-                        ? NonaColor.coral.withValues(alpha: 0.65)
-                        : const Color(0xFF385A70),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: size * 0.02,
-                right: size * 0.17,
-                child: Container(
-                  width: 16,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    color: unavailable ? NonaColor.muted : NonaColor.coral,
-                    shape: BoxShape.circle,
-                  ),
-                ),
+              NonaConnectionHalo(
+                size: size,
+                state: vpnState,
+                unavailable: unavailable,
               ),
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   SizedBox(
                     width: size - 36,
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        _statusLabel,
-                        style: const TextStyle(
-                          color: NonaColor.cream,
-                          fontSize: 23,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.6,
+                    child: AnimatedSwitcher(
+                      duration: NonaMotion.duration(
+                        context,
+                        NonaMotion.standard,
+                      ),
+                      child: FittedBox(
+                        key: ValueKey('vpn-label-$vpnState'),
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          _statusLabel,
+                          style: const TextStyle(
+                            color: NonaColor.cream,
+                            fontSize: 23,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.6,
+                          ),
                         ),
                       ),
                     ),
@@ -630,13 +634,20 @@ class NonaControlScreen extends StatelessWidget {
                   const SizedBox(height: 2),
                   SizedBox(
                     width: size - 48,
-                    child: Text(
-                      _statusCaption,
-                      maxLines: 4,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: NonaColor.muted,
-                        fontSize: 11,
+                    child: AnimatedSwitcher(
+                      duration: NonaMotion.duration(
+                        context,
+                        NonaMotion.standard,
+                      ),
+                      child: Text(
+                        _statusCaption,
+                        key: ValueKey('vpn-caption-$vpnState'),
+                        maxLines: 4,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: NonaColor.muted,
+                          fontSize: 11,
+                        ),
                       ),
                     ),
                   ),
@@ -672,11 +683,11 @@ class NonaControlScreen extends StatelessWidget {
           if (selectedTab == 0) const SizedBox(height: 12),
           Row(
             children: [
-              _bottomItem('Состояние', Icons.dashboard_rounded, 0),
+              _bottomItem(context, 'Состояние', Icons.dashboard_rounded, 0),
               const SizedBox(width: 6),
-              _bottomItem('Маршруты', Icons.alt_route_rounded, 1),
+              _bottomItem(context, 'Маршруты', Icons.alt_route_rounded, 1),
               const SizedBox(width: 6),
-              _bottomItem('Аккаунт', Icons.person_rounded, 2),
+              _bottomItem(context, 'Аккаунт', Icons.person_rounded, 2),
             ],
           ),
         ],
@@ -684,7 +695,12 @@ class NonaControlScreen extends StatelessWidget {
     );
   }
 
-  Widget _bottomItem(String label, IconData icon, int index) {
+  Widget _bottomItem(
+    BuildContext context,
+    String label,
+    IconData icon,
+    int index,
+  ) {
     final selected = selectedTab == index || (selectedTab == 3 && index == 2);
     return Expanded(
       child: Semantics(
@@ -693,6 +709,7 @@ class NonaControlScreen extends StatelessWidget {
         label: label,
         child: Material(
           color: selected ? NonaColor.raised : Colors.transparent,
+          animationDuration: NonaMotion.duration(context, NonaMotion.standard),
           borderRadius: BorderRadius.circular(12),
           child: InkWell(
             onTap: () => onSelectTab(index),
@@ -718,10 +735,18 @@ class NonaControlScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          icon,
-                          size: 22,
-                          color: selected ? NonaColor.coral : NonaColor.muted,
+                        AnimatedScale(
+                          scale: selected ? 1.1 : 1,
+                          duration: NonaMotion.duration(
+                            context,
+                            NonaMotion.standard,
+                          ),
+                          curve: Curves.easeOutCubic,
+                          child: Icon(
+                            icon,
+                            size: 22,
+                            color: selected ? NonaColor.coral : NonaColor.muted,
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -760,9 +785,9 @@ class NonaControlScreen extends StatelessWidget {
             children: [
               _brand(),
               const SizedBox(height: 62),
-              _sideItem('Состояние', 0),
-              _sideItem('Маршруты', 1),
-              _sideItem('Аккаунт', 2),
+              _sideItem(context, 'Состояние', 0),
+              _sideItem(context, 'Маршруты', 1),
+              _sideItem(context, 'Аккаунт', 2),
               const Spacer(),
               const Text(
                 'Виртуальный помощник Нона',
@@ -781,9 +806,12 @@ class NonaControlScreen extends StatelessWidget {
                 constraints: BoxConstraints(
                   minHeight: MediaQuery.sizeOf(context).height - 68,
                 ),
-                child: selectedTab == 0
-                    ? _desktopStatus(context)
-                    : _desktopDetail(context),
+                child: _tabTransition(
+                  context,
+                  selectedTab == 0
+                      ? _desktopStatus(context)
+                      : _desktopDetail(context),
+                ),
               ),
             ),
           ),
@@ -792,10 +820,11 @@ class NonaControlScreen extends StatelessWidget {
     );
   }
 
-  Widget _sideItem(String label, int index) => InkWell(
+  Widget _sideItem(BuildContext context, String label, int index) => InkWell(
     onTap: () => onSelectTab(index),
     borderRadius: BorderRadius.circular(4),
-    child: Container(
+    child: AnimatedContainer(
+      duration: NonaMotion.duration(context, NonaMotion.standard),
       height: 48,
       width: double.infinity,
       padding: const EdgeInsets.only(left: 12),
@@ -858,7 +887,7 @@ class NonaControlScreen extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  _statusRing(212),
+                  _statusRing(context, 212),
                   const SizedBox(width: 27),
                   Expanded(
                     child: Column(
@@ -911,6 +940,7 @@ class NonaControlScreen extends StatelessWidget {
                     const SizedBox(height: 8),
                   ],
                   _metric(
+                    context,
                     'Текущий канал',
                     _channel,
                     leading: _connected && country != null
@@ -918,9 +948,12 @@ class NonaControlScreen extends StatelessWidget {
                         : null,
                   ),
                   _metric(
+                    context,
                     'Задержка HTTPS',
-                    latencyMs == null ? '—' : '$latencyMs мс',
+                    latencyMs == null ? '—' : '$latencyMs',
+                    unit: 'мс',
                     warm: latencyMs != null,
+                    loading: measuringLatency,
                   ),
                   if (latencyMessage != null)
                     Text(
@@ -973,43 +1006,62 @@ class NonaControlScreen extends StatelessWidget {
   );
 
   Widget _metric(
+    BuildContext context,
     String label,
     String value, {
     bool warm = false,
+    bool loading = false,
+    String? unit,
     Widget? leading,
-  }) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(vertical: 16),
-    decoration: const BoxDecoration(
-      border: Border(bottom: BorderSide(color: NonaColor.line)),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(color: NonaColor.muted, fontSize: 12),
-        ),
-        const SizedBox(height: 5),
-        Row(
-          children: [
-            if (leading != null) ...[leading, const SizedBox(width: 8)],
-            Flexible(
-              child: Text(
-                value,
-                softWrap: true,
-                style: TextStyle(
-                  color: warm ? const Color(0xFFF3D2A0) : NonaColor.cream,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w500,
-                ),
+  }) {
+    final animatedValue = AnimatedSwitcher(
+      duration: NonaMotion.duration(context, NonaMotion.quick),
+      child: loading
+          ? const NonaPingWave(key: ValueKey('desktop-ping-measuring'))
+          : Text(
+              value,
+              key: ValueKey(value),
+              softWrap: true,
+              style: TextStyle(
+                color: warm ? const Color(0xFFF3D2A0) : NonaColor.cream,
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
               ),
             ),
-          ],
-        ),
-      ],
-    ),
-  );
+    );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: NonaColor.line)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(color: NonaColor.muted, fontSize: 12),
+          ),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              if (leading != null) ...[leading, const SizedBox(width: 8)],
+              if (unit == null)
+                Flexible(child: animatedValue)
+              else ...[
+                SizedBox(width: 72, child: animatedValue),
+                const SizedBox(width: 4),
+                Text(
+                  unit,
+                  style: const TextStyle(color: NonaColor.muted, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _quickBox(
     String title,
