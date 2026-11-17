@@ -41,6 +41,11 @@ import 'nona_startup_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+    ]);
+  }
   ui.Image? startupFigure;
   try {
     final bytes = await rootBundle.load('assets/brand/nona-full-body.png');
@@ -368,21 +373,23 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _startupStatus = 'Проверяем обновления');
 
     AppUpdate? update;
-    final client = http.Client();
-    try {
-      final package = await PackageInfo.fromPlatform();
-      update = await GitHubUpdateChecker(client).check(
-        installedVersion: package.version,
-        platform: defaultTargetPlatform,
-      );
-      if (update != null &&
-          await _preferences.getString('dismissed_update_tag') == update.tag) {
-        update = null;
+    if (defaultTargetPlatform != TargetPlatform.android || kReleaseMode) {
+      final client = http.Client();
+      try {
+        final package = await PackageInfo.fromPlatform();
+        update = await GitHubUpdateChecker(client).check(
+          installedVersion: package.version,
+          platform: defaultTargetPlatform,
+        );
+        if (update != null &&
+            await _preferences.getString('dismissed_update_tag') == update.tag) {
+          update = null;
+        }
+      } catch (_) {
+        // A GitHub outage must not prevent use of saved VPN configuration.
+      } finally {
+        client.close();
       }
-    } catch (_) {
-      // A GitHub outage must not prevent use of saved VPN configuration.
-    } finally {
-      client.close();
     }
     final remaining =
         const Duration(milliseconds: 900) - DateTime.now().difference(started);

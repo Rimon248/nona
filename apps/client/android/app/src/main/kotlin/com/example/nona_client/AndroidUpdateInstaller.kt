@@ -11,7 +11,7 @@ import java.net.URL
 import java.security.MessageDigest
 
 internal object AndroidUpdateInstaller {
-    private const val maxApkBytes = 150L * 1024 * 1024
+    private const val maxApkBytes = 256L * 1024 * 1024
 
     fun downloadAndVerify(context: Context, url: String, sha256: String, tag: String): File {
         require(Regex("^v[0-9]+\\.[0-9]+\\.[0-9]+$").matches(tag))

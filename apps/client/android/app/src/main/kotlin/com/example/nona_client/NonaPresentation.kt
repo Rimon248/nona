@@ -53,6 +53,8 @@ internal object NonaPresentation {
     fun updatesEnabled(context: Context) =
         context.getSharedPreferences(settingsName, Context.MODE_PRIVATE).getBoolean("updates", true)
 
+    fun clearUpdateNotification(context: Context) = manager(context).cancel(updateId)
+
     fun setCountry(context: Context, country: String?) {
         val edit = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).edit()
             .putString("country", country?.take(60))

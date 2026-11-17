@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.pm.ApplicationInfo
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -29,7 +30,12 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         pendingQuickAction = quickAction(intent)
         super.onCreate(savedInstanceState)
-        UpdateCheckJob.schedule(this)
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            UpdateCheckJob.cancel(this)
+            NonaPresentation.clearUpdateNotification(this)
+        } else {
+            UpdateCheckJob.schedule(this)
+        }
         NonaPresentation.refreshWidgets(this)
     }
 

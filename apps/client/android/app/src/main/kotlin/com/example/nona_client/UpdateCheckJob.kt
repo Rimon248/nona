@@ -26,6 +26,10 @@ class UpdateCheckJob : JobService() {
                 .build())
         }
 
+        fun cancel(context: Context) {
+            context.getSystemService(JobScheduler::class.java).cancel(jobId)
+        }
+
         private fun newer(candidate: String, installed: String): Boolean {
             val pattern = Regex("^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:\\+\\d+)?$")
             val next = pattern.matchEntire(candidate)?.groupValues?.drop(1)?.map { it.toInt() } ?: return false
