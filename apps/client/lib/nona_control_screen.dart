@@ -14,6 +14,8 @@ class NonaControlScreen extends StatelessWidget {
   const NonaControlScreen({
     super.key,
     required this.selectedTab,
+    required this.previousTab,
+    required this.cardSortEntrance,
     required this.onSelectTab,
     required this.vpnState,
     required this.signedIn,
@@ -56,6 +58,8 @@ class NonaControlScreen extends StatelessWidget {
   });
 
   final int selectedTab;
+  final int previousTab;
+  final bool cardSortEntrance;
   final ValueChanged<int> onSelectTab;
   final String vpnState;
   final bool signedIn;
@@ -452,21 +456,40 @@ class NonaControlScreen extends StatelessWidget {
     );
   }
 
-  Widget _tabTransition(BuildContext context, Widget page) =>
-      TweenAnimationBuilder<double>(
-        key: ValueKey('tab-$selectedTab'),
-        tween: Tween(begin: 0, end: 1),
+  Widget _tabTransition(
+    BuildContext context,
+    Widget page, {
+    bool fillViewport = true,
+  }) {
+    final direction = selectedTab >= previousTab ? 1.0 : -1.0;
+    return ClipRect(
+      child: AnimatedSwitcher(
         duration: NonaMotion.duration(context, NonaMotion.page),
-        curve: Curves.easeOutQuart,
-        builder: (context, value, child) => Opacity(
-          opacity: 0.65 + value * 0.35,
-          child: Transform.translate(
-            offset: Offset((1 - value) * 36, (1 - value) * 10),
-            child: child,
-          ),
+        layoutBuilder: (currentChild, previousChildren) => Stack(
+          fit: fillViewport ? StackFit.expand : StackFit.loose,
+          children: [...previousChildren, ?currentChild],
         ),
-        child: RepaintBoundary(child: page),
-      );
+        transitionBuilder: (child, animation) {
+          final incoming = child.key == ValueKey('tab-$selectedTab');
+          return SlideTransition(
+            position:
+                Tween<Offset>(
+                  begin: Offset(incoming ? direction : -direction, 0),
+                  end: Offset.zero,
+                ).animate(
+                  CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                    reverseCurve: Curves.easeInCubic,
+                  ),
+                ),
+            child: RepaintBoundary(child: child),
+          );
+        },
+        child: KeyedSubtree(key: ValueKey('tab-$selectedTab'), child: page),
+      ),
+    );
+  }
 
   Widget _mobileStatus(BuildContext context) {
     return RefreshIndicator(
@@ -477,100 +500,126 @@ class NonaControlScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const _Eyebrow('Состояние связи'),
-            const SizedBox(height: 10),
-            const Text(
-              'Ваше соединение\nпод контролем.',
-              style: TextStyle(
-                color: NonaColor.cream,
-                fontSize: 34,
-                height: 1.08,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -1.3,
+            NonaCardSortItem(
+              step: 0,
+              enabled: cardSortEntrance,
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _Eyebrow('Состояние связи'),
+                  SizedBox(height: 10),
+                  Text(
+                    'Ваше соединение\nпод контролем.',
+                    style: TextStyle(
+                      color: NonaColor.cream,
+                      fontSize: 34,
+                      height: 1.08,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -1.3,
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 30),
-            Center(
-              child: NonaConnectionPress(
-                enabled: onConnectionTap != null,
-                child: _statusRing(context, 224),
+            NonaCardSortItem(
+              step: 1,
+              enabled: cardSortEntrance,
+              child: Center(
+                child: NonaConnectionPress(
+                  enabled: onConnectionTap != null,
+                  child: _statusRing(context, 224),
+                ),
               ),
             ),
             const SizedBox(height: 23),
             if (manualConnectionEnabled) ...[
-              _connectionSettings(context),
+              NonaCardSortItem(
+                step: 2,
+                enabled: cardSortEntrance,
+                child: _connectionSettings(context),
+              ),
               const SizedBox(height: 10),
             ],
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              decoration: const BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: NonaColor.line),
-                  bottom: BorderSide(color: NonaColor.line),
+            NonaCardSortItem(
+              step: manualConnectionEnabled ? 3 : 2,
+              enabled: cardSortEntrance,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                decoration: const BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: NonaColor.line),
+                    bottom: BorderSide(color: NonaColor.line),
+                  ),
                 ),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Текущий канал',
-                          style: TextStyle(
-                            color: NonaColor.muted,
-                            fontSize: 12,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Текущий канал',
+                            style: TextStyle(
+                              color: NonaColor.muted,
+                              fontSize: 12,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 5),
-                        Row(
-                          children: [
-                            if (_connected && country != null) ...[
-                              CountryFlag(country: country, size: 20),
-                              const SizedBox(width: 7),
-                            ],
-                            Flexible(
-                              child: Text(
-                                _channel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: NonaColor.cream,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              if (_connected && country != null) ...[
+                                CountryFlag(country: country, size: 20),
+                                const SizedBox(width: 7),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  _channel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: NonaColor.cream,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 78,
+                      child: AnimatedSwitcher(
+                        duration: NonaMotion.duration(
+                          context,
+                          NonaMotion.quick,
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 78,
-                    child: AnimatedSwitcher(
-                      duration: NonaMotion.duration(context, NonaMotion.quick),
-                      child: measuringLatency
-                          ? const NonaPingWave(key: ValueKey('ping-measuring'))
-                          : Text(
-                              latencyMs == null ? '—' : '$latencyMs',
-                              key: ValueKey('ping-${latencyMs ?? 'empty'}'),
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(
-                                color: NonaColor.cream,
-                                fontSize: 26,
-                                fontWeight: FontWeight.w400,
+                        child: measuringLatency
+                            ? const NonaPingWave(
+                                key: ValueKey('ping-measuring'),
+                              )
+                            : Text(
+                                latencyMs == null ? '—' : '$latencyMs',
+                                key: ValueKey('ping-${latencyMs ?? 'empty'}'),
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                  color: NonaColor.cream,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w400,
+                                ),
                               ),
-                            ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  const Text(
-                    'мс',
-                    style: TextStyle(color: NonaColor.muted, fontSize: 12),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    const Text(
+                      'мс',
+                      style: TextStyle(color: NonaColor.muted, fontSize: 12),
+                    ),
+                  ],
+                ),
               ),
             ),
             if (latencyMessage != null)
@@ -613,7 +662,12 @@ class NonaControlScreen extends StatelessWidget {
                 size: size,
                 state: vpnState,
                 unavailable: unavailable,
-                loading: busy || measuringLatency || vpnState == 'connecting',
+                loading:
+                    vpnState == 'connecting' ||
+                    measuringLatency ||
+                    (busy &&
+                        vpnState != 'connected' &&
+                        vpnState != 'disconnecting'),
               ),
               Column(
                 mainAxisSize: MainAxisSize.min,
@@ -820,6 +874,7 @@ class NonaControlScreen extends StatelessWidget {
                   selectedTab == 0
                       ? _desktopStatus(context)
                       : _desktopDetail(context),
+                  fillViewport: false,
                 ),
               ),
             ),

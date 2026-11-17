@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart';
 
 import 'credential_box.dart';
 
@@ -30,6 +31,24 @@ class BundleVerifier {
   final Map<String, List<int>> trustedKeys;
 
   Future<VerifiedBundle> verify(
+    String envelopeJson, {
+    required String accountId,
+    required String deviceId,
+    required int minimumVersion,
+    required DateTime now,
+  }) => compute(
+    _verifyBundleInWorker,
+    _BundleVerifyRequest(
+      envelopeJson: envelopeJson,
+      trustedKeys: trustedKeys,
+      accountId: accountId,
+      deviceId: deviceId,
+      minimumVersion: minimumVersion,
+      now: now,
+    ),
+  );
+
+  Future<VerifiedBundle> _verifyLocally(
     String envelopeJson, {
     required String accountId,
     required String deviceId,
@@ -164,6 +183,33 @@ class BundleVerifier {
     return VerifiedBundle(version: version, payload: payload);
   }
 }
+
+class _BundleVerifyRequest {
+  const _BundleVerifyRequest({
+    required this.envelopeJson,
+    required this.trustedKeys,
+    required this.accountId,
+    required this.deviceId,
+    required this.minimumVersion,
+    required this.now,
+  });
+
+  final String envelopeJson;
+  final Map<String, List<int>> trustedKeys;
+  final String accountId;
+  final String deviceId;
+  final int minimumVersion;
+  final DateTime now;
+}
+
+Future<VerifiedBundle> _verifyBundleInWorker(_BundleVerifyRequest request) =>
+    BundleVerifier(request.trustedKeys)._verifyLocally(
+      request.envelopeJson,
+      accountId: request.accountId,
+      deviceId: request.deviceId,
+      minimumVersion: request.minimumVersion,
+      now: request.now,
+    );
 
 bool _hasExactly(Map<String, dynamic> map, Set<String> keys) =>
     map.length == keys.length && map.keys.toSet().containsAll(keys);

@@ -117,6 +117,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _routingLoadFailed = false;
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
   int _selectedTab = 0;
+  int _previousTab = 0;
+  bool _cardSortEntrance = false;
   int? _latencyMs;
   int _lastLatencyAt = 0;
   bool _measuringLatency = false;
@@ -398,7 +400,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       await _offerAppUpdate(update);
     }
-    if (mounted) setState(() => _starting = false);
+    if (mounted) {
+      setState(() {
+        _starting = false;
+        _cardSortEntrance = true;
+      });
+      Future<void>.delayed(const Duration(milliseconds: 950), () {
+        if (mounted) setState(() => _cardSortEntrance = false);
+      });
+    }
     if (defaultTargetPlatform == TargetPlatform.android) {
       unawaited(_consumeAndroidAction());
       if (_settings.updateNotifications) {
@@ -694,7 +704,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _selectTab(int tab) {
     if (tab < 0 || tab > 2) return;
-    setState(() => _selectedTab = tab);
+    setState(() {
+      _previousTab = _selectedTab;
+      _selectedTab = tab;
+    });
     if (tab != 1 || _routingData != null) return;
     Future<void>.delayed(NonaMotion.duration(context, NonaMotion.page), () {
       if (!mounted || _selectedTab != 1 || _routingData != null) return;
@@ -903,6 +916,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _connectVpn() async {
+    final timing = Stopwatch()..start();
+    void mark(String stage) {
+      if (kDebugMode) {
+        debugPrint('Nona connect: $stage at ${timing.elapsedMilliseconds} ms');
+      }
+    }
+
+    void onFrames(List<ui.FrameTiming> frames) {
+      if (!kDebugMode) return;
+      for (final frame in frames) {
+        if (frame.totalSpan.inMilliseconds < 34) continue;
+        debugPrint(
+          'Nona connect frame: total ${frame.totalSpan.inMilliseconds} ms, '
+          'build ${frame.buildDuration.inMilliseconds} ms, '
+          'raster ${frame.rasterDuration.inMilliseconds} ms',
+        );
+      }
+    }
+
     final auth = _auth;
     final vault = _vault;
     final accountId = auth?.accountId;
@@ -924,6 +956,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _measuringLatency = false;
       _latencyRequestId++;
     });
+    if (kDebugMode) WidgetsBinding.instance.addTimingsCallback(onFrames);
+    mark('pressed');
     List<int>? seed;
     var measureOnConnect = false;
     try {
@@ -931,9 +965,11 @@ class _HomeScreenState extends State<HomeScreen> {
         WidgetsBinding.instance.endOfFrame,
         Future<void>.delayed(const Duration(milliseconds: 80)),
       ]);
+      mark('first frame');
       try {
         await auth.refreshAccountStatus();
       } catch (_) {}
+      mark('account status');
       if (auth.vpnAccessStatus != null && auth.vpnAccessStatus != 'approved') {
         throw const AuthException('VPN access has not been approved');
       }
@@ -942,6 +978,7 @@ class _HomeScreenState extends State<HomeScreen> {
         deviceId: deviceId,
         now: DateTime.now(),
       );
+      mark('configuration opened');
       if (bundle == null) throw const BundleException('No saved configuration');
       final preference = ConnectionPreference(
         nodeId: _manualConnectionEnabled ? _selectedNodeId : null,
@@ -960,6 +997,7 @@ class _HomeScreenState extends State<HomeScreen> {
         throw const BundleException('Selected node is unavailable');
       }
       seed = await auth.readDeviceSeed();
+      mark('device key opened');
       var connected = false;
       var declined = false;
       nodeLoop:
@@ -972,6 +1010,7 @@ class _HomeScreenState extends State<HomeScreen> {
           deviceSeed: seed,
           now: DateTime.now(),
         );
+        mark('node access opened');
         final candidates = <({String name, Future<bool?> Function() start})>[
           if (access.hysteria2 != null &&
               preference.allowsTransport('hysteria2'))
@@ -981,7 +1020,9 @@ class _HomeScreenState extends State<HomeScreen> {
             (name: 'VLESS', start: () => _startVless(access.vlessReality!)),
         ];
         for (final candidate in candidates) {
+          mark('starting transport');
           final result = await _attemptVpn(candidate.start);
+          mark('transport returned');
           if (result == null) {
             declined = true;
             break nodeLoop;
@@ -1020,6 +1061,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _message = 'Не удалось открыть конфигурацию или запустить VPN';
       _lastConnectionError = _message;
     } finally {
+      if (kDebugMode) WidgetsBinding.instance.removeTimingsCallback(onFrames);
+      mark('finished');
       if (seed != null) seed.fillRange(0, seed.length, 0);
       if (mounted) {
         if (_lastConnectionError != null && _vpnState != 'connected') {
@@ -1306,22 +1349,18 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) => AnimatedSwitcher(
     duration: NonaMotion.duration(context, NonaMotion.startup),
-    reverseDuration: NonaMotion.duration(context, NonaMotion.page),
+    reverseDuration: NonaMotion.duration(
+      context,
+      const Duration(milliseconds: 380),
+    ),
     layoutBuilder: (currentChild, previousChildren) => Stack(
       fit: StackFit.expand,
-      children: [...previousChildren, ?currentChild],
+      children: [?currentChild, ...previousChildren],
     ),
-    transitionBuilder: (child, animation) {
-      final enteringMain = child.key == const ValueKey('main-stage');
-      final position = Tween<Offset>(
-        begin: enteringMain ? const Offset(0, 0.045) : const Offset(0, -0.025),
-        end: Offset.zero,
-      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
-      return FadeTransition(
-        opacity: animation,
-        child: SlideTransition(position: position, child: child),
-      );
-    },
+    transitionBuilder: (child, animation) =>
+        child.key == const ValueKey('main-stage')
+        ? child
+        : FadeTransition(opacity: animation, child: child),
     child: KeyedSubtree(
       key: ValueKey(_starting ? 'startup-stage' : 'main-stage'),
       child: RepaintBoundary(child: _buildContent(context)),
@@ -1431,6 +1470,8 @@ class _HomeScreenState extends State<HomeScreen> {
         : null;
     return NonaControlScreen(
       selectedTab: _selectedTab,
+      previousTab: _previousTab,
+      cardSortEntrance: _cardSortEntrance,
       onSelectTab: _selectTab,
       vpnState: _vpnState,
       signedIn: signedIn,

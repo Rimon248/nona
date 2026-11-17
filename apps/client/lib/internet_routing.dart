@@ -206,60 +206,12 @@ class InternetRoutingClient {
   Future<InternetRoutingState> _loadFromChannel() async {
     if (_desktop) return _loadDesktop();
     final raw = await _channel.invokeMethod<Map<Object?, Object?>>('getState');
-    if (raw == null ||
-        raw['apps'] is! List ||
-        raw['siteCatalogue'] is! List ||
-        raw['appCatalogue'] is! List ||
-        raw['policy'] is! Map) {
-      throw const FormatException('Invalid routing response');
-    }
-    final apps = (raw['apps'] as List).map((item) {
-      if (item is! Map ||
-          item['packageName'] is! String ||
-          item['label'] is! String) {
-        throw const FormatException('Invalid application');
-      }
-      return LaunchableApp(
-        packageName: item['packageName'] as String,
-        label: item['label'] as String,
-      );
-    }).toList();
-    final sites = (raw['siteCatalogue'] as List).map((item) {
-      if (item is! Map ||
-          item['domain'] is! String ||
-          item['label'] is! String ||
-          item['essential'] is! bool ||
-          item['zone'] is! bool) {
-        throw const FormatException('Invalid site catalogue');
-      }
-      return RussianSite(
-        domain: item['domain'] as String,
-        label: item['label'] as String,
-        essential: item['essential'] as bool,
-        zone: item['zone'] as bool,
-      );
-    }).toList();
-    final catalogue = <String, RussianApp>{};
-    for (final item in raw['appCatalogue'] as List) {
-      if (item is! Map ||
-          item['packageName'] is! String ||
-          item['essential'] is! bool) {
-        throw const FormatException('Invalid app catalogue');
-      }
-      final id = item['packageName'] as String;
-      catalogue[id] = RussianApp(
-        packageName: id,
-        essential: item['essential'] as bool,
-      );
-    }
-    return InternetRoutingState(
-      apps: apps,
-      sites: sites,
-      appCatalogue: catalogue,
-      policy: InternetPolicy.fromChannel(
-        (raw['policy'] as Map).cast<Object?, Object?>(),
-      ),
-    );
+    if (raw == null) throw const FormatException('Invalid routing response');
+    final count = (raw['apps'] as List?)?.length ?? 0;
+    final total = count + ((raw['siteCatalogue'] as List?)?.length ?? 0);
+    return total < 80
+        ? _parseRoutingState(raw)
+        : compute(_parseRoutingState, raw);
   }
 
   Future<void> save(InternetPolicy policy) async {
@@ -382,6 +334,62 @@ class InternetRoutingClient {
       return const [];
     }
   }
+}
+
+InternetRoutingState _parseRoutingState(Map<Object?, Object?> raw) {
+  if (raw['apps'] is! List ||
+      raw['siteCatalogue'] is! List ||
+      raw['appCatalogue'] is! List ||
+      raw['policy'] is! Map) {
+    throw const FormatException('Invalid routing response');
+  }
+  final apps = (raw['apps'] as List).map((item) {
+    if (item is! Map ||
+        item['packageName'] is! String ||
+        item['label'] is! String) {
+      throw const FormatException('Invalid application');
+    }
+    return LaunchableApp(
+      packageName: item['packageName'] as String,
+      label: item['label'] as String,
+    );
+  }).toList();
+  final sites = (raw['siteCatalogue'] as List).map((item) {
+    if (item is! Map ||
+        item['domain'] is! String ||
+        item['label'] is! String ||
+        item['essential'] is! bool ||
+        item['zone'] is! bool) {
+      throw const FormatException('Invalid site catalogue');
+    }
+    return RussianSite(
+      domain: item['domain'] as String,
+      label: item['label'] as String,
+      essential: item['essential'] as bool,
+      zone: item['zone'] as bool,
+    );
+  }).toList();
+  final catalogue = <String, RussianApp>{};
+  for (final item in raw['appCatalogue'] as List) {
+    if (item is! Map ||
+        item['packageName'] is! String ||
+        item['essential'] is! bool) {
+      throw const FormatException('Invalid app catalogue');
+    }
+    final id = item['packageName'] as String;
+    catalogue[id] = RussianApp(
+      packageName: id,
+      essential: item['essential'] as bool,
+    );
+  }
+  return InternetRoutingState(
+    apps: apps,
+    sites: sites,
+    appCatalogue: catalogue,
+    policy: InternetPolicy.fromChannel(
+      (raw['policy'] as Map).cast<Object?, Object?>(),
+    ),
+  );
 }
 
 /// Returns the host of an HTTPS URL or a bare domain. Rules include subdomains.

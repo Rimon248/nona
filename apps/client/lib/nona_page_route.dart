@@ -20,13 +20,12 @@ Route<T> nonaPageRoute<T>(
       curve: Curves.easeOutQuart,
       reverseCurve: Curves.easeInOutCubic,
     );
-    return SlideTransition(
-      position: Tween<Offset>(
-        begin: const Offset(0.12, 0),
-        end: Offset.zero,
-      ).animate(eased),
-      child: FadeTransition(
-        opacity: Tween<double>(begin: 0.7, end: 1).animate(eased),
+    return ClipRect(
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(1, 0),
+          end: Offset.zero,
+        ).animate(eased),
         child: RepaintBoundary(child: child),
       ),
     );

@@ -61,12 +61,69 @@ void main() {
     expect(tester.getCenter(dot), start);
 
     await tester.pumpWidget(halo(true));
-    await tester.pump(const Duration(milliseconds: 375));
+    for (var frame = 0; frame < 4; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final afterStart = tester.getCenter(dot);
+    for (var frame = 0; frame < 4; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final afterAcceleration = tester.getCenter(dot);
+    expect(
+      (afterAcceleration - afterStart).distance,
+      greaterThan((afterStart - start).distance),
+    );
+    for (var frame = 0; frame < 14; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
     expect(tester.getCenter(dot), isNot(start));
 
     await tester.pumpWidget(halo(false));
-    await tester.pump(const Duration(milliseconds: 350));
+    var previous = tester.getCenter(dot);
+    final movements = <double>[];
+    for (var frame = 0; frame < 200; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      final current = tester.getCenter(dot);
+      final distance = (current - previous).distance;
+      if (distance > 0.001) movements.add(distance);
+      previous = current;
+      if (frame == 49) {
+        expect((current - start).distance, greaterThan(1));
+      }
+    }
     expect((tester.getCenter(dot) - start).distance, lessThan(0.1));
+    expect(movements.last, lessThan(movements.reduce((a, b) => a > b ? a : b)));
+  });
+
+  testWidgets('startup cards enter one after another', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              NonaCardSortItem(step: 0, enabled: true, child: Text('Первый')),
+              NonaCardSortItem(step: 2, enabled: true, child: Text('Второй')),
+            ],
+          ),
+        ),
+      ),
+    );
+    final first = find.descendant(
+      of: find.byType(NonaCardSortItem).at(0),
+      matching: find.byType(FadeTransition),
+    );
+    final second = find.descendant(
+      of: find.byType(NonaCardSortItem).at(1),
+      matching: find.byType(FadeTransition),
+    );
+    await tester.pump(const Duration(milliseconds: 240));
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(tester.widget<FadeTransition>(first).opacity.value, greaterThan(0));
+    expect(tester.widget<FadeTransition>(second).opacity.value, 0);
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.widget<FadeTransition>(first).opacity.value, 1);
+    expect(tester.widget<FadeTransition>(second).opacity.value, 1);
   });
 
   testWidgets('VPN circle compresses and springs back on press', (

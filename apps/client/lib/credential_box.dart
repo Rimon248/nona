@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart';
 
 /// Decrypts the access data inside a verified configuration bundle.
 /// Call only after BundleVerifier has checked the signed account, device,
@@ -89,6 +90,19 @@ class CredentialBox {
     required String encoded,
     required List<int> deviceSeed,
     required CredentialContext context,
+  }) => compute(
+    _openCredentialInWorker,
+    _CredentialOpenRequest(
+      encoded: encoded,
+      deviceSeed: deviceSeed,
+      context: context,
+    ),
+  );
+
+  Future<List<int>> _openLocally({
+    required String encoded,
+    required List<int> deviceSeed,
+    required CredentialContext context,
   }) async {
     final aad = context.associatedData();
     if (deviceSeed.length != 32) {
@@ -122,5 +136,32 @@ class CredentialBox {
     } catch (_) {
       throw const CredentialException('Credential authentication failed');
     }
+  }
+}
+
+class _CredentialOpenRequest {
+  const _CredentialOpenRequest({
+    required this.encoded,
+    required this.deviceSeed,
+    required this.context,
+  });
+
+  final String encoded;
+  final List<int> deviceSeed;
+  final CredentialContext context;
+}
+
+Future<List<int>> _openCredentialInWorker(
+  _CredentialOpenRequest request,
+) async {
+  final seed = List<int>.of(request.deviceSeed);
+  try {
+    return await const CredentialBox()._openLocally(
+      encoded: request.encoded,
+      deviceSeed: seed,
+      context: request.context,
+    );
+  } finally {
+    seed.fillRange(0, seed.length, 0);
   }
 }

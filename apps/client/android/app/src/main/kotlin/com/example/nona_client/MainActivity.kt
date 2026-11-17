@@ -168,15 +168,13 @@ class MainActivity : FlutterFragmentActivity() {
                                 "siteCatalogue" to InternetRouting.siteCatalogue(),
                                 "appCatalogue" to InternetRouting.appCatalogue(),
                             )
-                            runOnUiThread { result.success(state) }
+                            result.success(state)
                         } catch (_: Exception) {
-                            runOnUiThread {
-                                result.error(
-                                    "ROUTING_LOAD_FAILED",
-                                    "Could not load routing data",
-                                    null,
-                                )
-                            }
+                            result.error(
+                                "ROUTING_LOAD_FAILED",
+                                "Could not load routing data",
+                                null,
+                            )
                         }
                     }
                     "saveInternetPolicy" -> {

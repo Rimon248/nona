@@ -550,45 +550,20 @@ class _SiteListPageState extends State<_SiteListPage> {
                   )
                 : RefreshIndicator(
                     onRefresh: _refresh,
-                    child: ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                      children: [
-                        if (zones.isNotEmpty)
-                          _catalogSection(
-                            'Доменные зоны',
-                            zones
-                                .map(
-                                  (site) => _RouteToggleTile(
-                                    title: site.label,
-                                    subtitle:
-                                        'Все сайты в зоне ${site.label.split(' ').first}',
-                                    value: policy.directSite(site),
-                                    onChanged: (value) => _set(site, value),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        if (services.isNotEmpty)
-                          _catalogSection(
-                            'Сервисы и банки',
-                            services
-                                .map(
-                                  (site) => _RouteToggleTile(
-                                    title: site.label,
-                                    subtitle: site.domain,
-                                    value: policy.directSite(site),
-                                    onChanged: (value) => _set(site, value),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        if (sites.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(20),
-                            child: Text('Совпадений не найдено'),
-                          ),
+                    child: _catalogList<RussianSite>(
+                      groups: [
+                        (title: 'Доменные зоны', items: zones),
+                        (title: 'Сервисы и банки', items: services),
                       ],
+                      emptyMessage: 'Совпадений не найдено',
+                      itemBuilder: (site) => _RouteToggleTile(
+                        title: site.label,
+                        subtitle: site.zone
+                            ? 'Все сайты в зоне ${site.label.split(' ').first}'
+                            : site.domain,
+                        value: policy.directSite(site),
+                        onChanged: (value) => _set(site, value),
+                      ),
                     ),
                   ),
           ),
@@ -607,33 +582,65 @@ class _SiteListPageState extends State<_SiteListPage> {
   }
 }
 
-Widget _catalogSection(String title, List<Widget> children) => Padding(
-  padding: const EdgeInsets.only(bottom: 12),
-  child: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
-        child: Text(
-          title.toUpperCase(),
-          style: const TextStyle(
-            color: NonaColor.muted,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.2,
-          ),
-        ),
-      ),
-      Container(
-        decoration: BoxDecoration(
-          color: NonaColor.raised,
-          borderRadius: BorderRadius.circular(11),
-        ),
-        child: Column(children: children),
-      ),
-    ],
-  ),
-);
+Widget _catalogList<T>({
+  required List<({String title, List<T> items})> groups,
+  required Widget Function(T item) itemBuilder,
+  required String emptyMessage,
+}) {
+  final sections = groups.where((group) => group.items.isNotEmpty).toList();
+  if (sections.isEmpty) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        Padding(padding: const EdgeInsets.all(20), child: Text(emptyMessage)),
+      ],
+    );
+  }
+  final count = sections.fold<int>(
+    0,
+    (sum, group) => sum + group.items.length + 1,
+  );
+  return ListView.builder(
+    physics: const AlwaysScrollableScrollPhysics(),
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+    itemCount: count,
+    itemBuilder: (context, index) {
+      for (final section in sections) {
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+            child: Text(
+              section.title.toUpperCase(),
+              style: const TextStyle(
+                color: NonaColor.muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.2,
+              ),
+            ),
+          );
+        }
+        index--;
+        if (index < section.items.length) {
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: NonaColor.raised,
+              borderRadius: BorderRadius.vertical(
+                top: index == 0 ? const Radius.circular(11) : Radius.zero,
+                bottom: index == section.items.length - 1
+                    ? const Radius.circular(11)
+                    : Radius.zero,
+              ),
+            ),
+            child: itemBuilder(section.items[index]),
+          );
+        }
+        index -= section.items.length;
+      }
+      return const SizedBox.shrink();
+    },
+  );
+}
 
 class _RouteToggleTile extends StatelessWidget {
   const _RouteToggleTile({
@@ -901,7 +908,10 @@ class _AppListPageState extends State<_AppListPage> {
     final russianApps = apps
         .where((app) => data?.appCatalogue[app.packageName]?.essential == true)
         .toList();
-    final otherApps = apps.where((app) => !russianApps.contains(app)).toList();
+    final russianIds = russianApps.map((app) => app.packageName).toSet();
+    final otherApps = apps
+        .where((app) => !russianIds.contains(app.packageName))
+        .toList();
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -972,54 +982,26 @@ class _AppListPageState extends State<_AppListPage> {
                   )
                 : RefreshIndicator(
                     onRefresh: _refresh,
-                    child: ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                      children: [
-                        if (russianApps.isNotEmpty)
-                          _catalogSection(
-                            'Банки и сервисы',
-                            russianApps
-                                .map(
-                                  (app) => _RouteToggleTile(
-                                    title: app.label,
-                                    subtitle: app.packageName,
-                                    value: policy.directApp(
-                                      app.packageName,
-                                      data.appCatalogue,
-                                    ),
-                                    onChanged: (value) =>
-                                        _set(app.packageName, value),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        if (otherApps.isNotEmpty)
-                          _catalogSection(
-                            widget.russianOnly
-                                ? 'Другие приложения каталога'
-                                : 'Другие приложения',
-                            otherApps
-                                .map(
-                                  (app) => _RouteToggleTile(
-                                    title: app.label,
-                                    subtitle: app.packageName,
-                                    value: policy.directApp(
-                                      app.packageName,
-                                      data.appCatalogue,
-                                    ),
-                                    onChanged: (value) =>
-                                        _set(app.packageName, value),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        if (apps.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(20),
-                            child: Text('Подходящие приложения не найдены'),
-                          ),
+                    child: _catalogList<LaunchableApp>(
+                      groups: [
+                        (title: 'Банки и сервисы', items: russianApps),
+                        (
+                          title: widget.russianOnly
+                              ? 'Другие приложения каталога'
+                              : 'Другие приложения',
+                          items: otherApps,
+                        ),
                       ],
+                      emptyMessage: 'Подходящие приложения не найдены',
+                      itemBuilder: (app) => _RouteToggleTile(
+                        title: app.label,
+                        subtitle: app.packageName,
+                        value: policy.directApp(
+                          app.packageName,
+                          data.appCatalogue,
+                        ),
+                        onChanged: (value) => _set(app.packageName, value),
+                      ),
                     ),
                   ),
           ),
