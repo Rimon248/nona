@@ -36,15 +36,39 @@ internal object NonaPresentation {
         context.getSharedPreferences(settingsName, Context.MODE_PRIVATE).getBoolean("updates", true)
 
     fun setCountry(context: Context, country: String?) {
+        val edit = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).edit()
+            .putString("country", country?.take(60))
+            .remove("latency").remove("latencyMessage").remove("latencyAt")
+        if (country != null) edit.putString("lastCountry", country.take(60))
+        edit.apply()
+        publishVpn(context)
+    }
+
+    fun restoreCountry(context: Context) {
+        val last = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE)
+            .getString("lastCountry", null)
+        setCountry(context, last)
+    }
+
+    fun clearCountry(context: Context) {
         context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).edit()
-            .putString("country", country?.take(60)).remove("latency").apply()
+            .remove("country").remove("lastCountry").remove("latency")
+            .remove("latencyMessage").remove("latencyAt").apply()
         publishVpn(context)
     }
 
     fun setLatency(context: Context, milliseconds: Int?) {
         val edit = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).edit()
         if (milliseconds == null) edit.remove("latency") else edit.putInt("latency", milliseconds.coerceIn(1, 60000))
+        edit.remove("latencyMessage").putLong("latencyAt", System.currentTimeMillis())
         edit.apply()
+        publishVpn(context)
+    }
+
+    fun setLatencyError(context: Context) {
+        context.getSharedPreferences(presentationName, Context.MODE_PRIVATE).edit()
+            .remove("latency").putString("latencyMessage", "Не удалось измерить задержку. Проверьте VPN и повторите.")
+            .putLong("latencyAt", System.currentTimeMillis()).apply()
         publishVpn(context)
     }
 
@@ -54,6 +78,17 @@ internal object NonaPresentation {
     fun latency(context: Context): Int? {
         val prefs = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE)
         return if (prefs.contains("latency")) prefs.getInt("latency", 0) else null
+    }
+
+    fun snapshot(context: Context): Map<String, Any?> {
+        val prefs = context.getSharedPreferences(presentationName, Context.MODE_PRIVATE)
+        return mapOf("country" to country(context), "latency" to latency(context),
+            "latencyMessage" to prefs.getString("latencyMessage", null),
+            "latencyAt" to prefs.getLong("latencyAt", 0L))
+    }
+
+    private fun flaggedCountry(context: Context): String? = country(context)?.let {
+        "${when (it) { "Нидерланды" -> "🇳🇱"; "Швеция" -> "🇸🇪"; else -> "🌐" }} $it"
     }
 
     private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)
@@ -81,8 +116,8 @@ internal object NonaPresentation {
             Intent(context, NonaActionReceiver::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-    fun connectIntent(context: Context) = activityIntent(context, connectAction, 10)
-    fun restartIntent(context: Context) = activityIntent(context, restartAction, 11)
+    fun connectIntent(context: Context) = receiverIntent(context, connectAction, 10)
+    fun restartIntent(context: Context) = receiverIntent(context, restartAction, 11)
     fun stopIntent(context: Context) = receiverIntent(context, stopAction, 12)
     fun pingIntent(context: Context) = receiverIntent(context, pingAction, 13)
 
@@ -91,9 +126,10 @@ internal object NonaPresentation {
         val prefs = context.getSharedPreferences(settingsName, Context.MODE_PRIVATE)
         val connected = state == "connected"
         val description = when (state) {
-            "connected" -> listOfNotNull("VPN подключён", country(context),
+            "connected" -> listOfNotNull("VPN подключён", flaggedCountry(context),
                 if (prefs.getBoolean("ping", false)) latency(context)?.let { "$it мс" } else null).joinToString(" · ")
             "disconnecting" -> "Отключаем VPN"
+            "error" -> "Ошибка запуска VPN"
             else -> "Подключаем VPN"
         }
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, vpnChannel)
@@ -102,7 +138,7 @@ internal object NonaPresentation {
             .setContentTitle("Нона")
             .setContentText(description)
             .setContentIntent(activityIntent(context))
-            .setOngoing(true)
+            .setOngoing(state != "error")
             .setOnlyAlertOnce(true)
         if (connected && prefs.getBoolean("actions", true)) {
             builder.addAction(Notification.Action.Builder(null, "Перезапустить", restartIntent(context)).build())
@@ -116,8 +152,10 @@ internal object NonaPresentation {
 
     fun publishVpn(context: Context) {
         val state = NonaVpnService.state
-        if (state == "connected" || state == "connecting" || state == "disconnecting") {
+        if (state == "connected" || state == "connecting" || state == "disconnecting" || state == "error") {
             manager(context).notify(vpnId, vpnNotification(context, state))
+        } else {
+            manager(context).cancel(vpnId)
         }
         NonaWidgetProvider.updateAll(context)
     }

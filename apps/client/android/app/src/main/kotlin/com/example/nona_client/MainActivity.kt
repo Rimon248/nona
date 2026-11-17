@@ -41,6 +41,11 @@ class MainActivity : FlutterFragmentActivity() {
         quickChannel?.invokeMethod("quickAction", action)
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) quickChannel?.invokeMethod("presentationChanged", null)
+    }
+
     private fun quickAction(intent: Intent?): String? = when (intent?.action) {
         NonaPresentation.connectAction -> "CONNECT"
         NonaPresentation.restartAction -> "RESTART"
@@ -78,6 +83,16 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "latency" -> {
                     NonaPresentation.setLatency(this, call.arguments as? Int)
+                    result.success(null)
+                }
+                "latencyError" -> {
+                    NonaPresentation.setLatencyError(this)
+                    result.success(null)
+                }
+                "presentationSnapshot" -> result.success(NonaPresentation.snapshot(this))
+                "clearReconnect" -> {
+                    NonaReconnectProfile.clear(this)
+                    NonaPresentation.clearCountry(this)
                     result.success(null)
                 }
                 "showUpdate" -> {

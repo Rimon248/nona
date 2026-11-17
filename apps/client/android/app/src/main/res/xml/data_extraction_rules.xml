@@ -2,5 +2,6 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="FlutterSecureStorage" />
+        <exclude domain="sharedpref" path="nona_vpn_reconnect.xml" />
     </cloud-backup>
 </data-extraction-rules>

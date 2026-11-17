@@ -117,6 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
   int _selectedTab = 0;
   int? _latencyMs;
+  int _lastLatencyAt = 0;
   bool _measuringLatency = false;
   String? _latencyMessage;
   int _latencyRequestId = 0;
@@ -565,7 +566,37 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleAndroidAction(MethodCall call) async {
     if (call.method == 'quickAction' && call.arguments is String) {
       await _handleQuickAction(call.arguments as String);
+    } else if (call.method == 'presentationChanged') {
+      await _refreshVpnState();
     }
+  }
+
+  Future<void> _syncAndroidPresentation() async {
+    try {
+      final snapshot = await _androidUiChannel.invokeMapMethod<String, dynamic>(
+        'presentationSnapshot',
+      );
+      if (!mounted || _vpnState != 'connected' || snapshot == null) return;
+      final country = snapshot['country'] as String?;
+      final latencyAt = snapshot['latencyAt'] as int? ?? 0;
+      setState(() {
+        if (country != null) _vpnCountry = country;
+        if (latencyAt > 0 && latencyAt >= _lastLatencyAt) {
+          _lastLatencyAt = latencyAt;
+          _latencyMs = snapshot['latency'] as int?;
+          _latencyMessage = snapshot['latencyMessage'] as String?;
+        }
+      });
+    } catch (_) {
+      // A presentation refresh does not affect VPN control.
+    }
+  }
+
+  Future<void> _clearAndroidReconnect() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _androidUiChannel.invokeMethod<void>('clearReconnect');
+    } catch (_) {}
   }
 
   Future<void> _handleQuickAction(String action) async {
@@ -754,6 +785,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _hasUsableConfiguration = false;
       _setAvailableNodes(null);
       await vault.clear();
+      await _clearAndroidReconnect();
       if (_vpnState != 'idle' && _vpnControlsAvailable) {
         await _stopVpn();
         _vpnState = 'idle';
@@ -775,12 +807,14 @@ class _HomeScreenState extends State<HomeScreen> {
       ).refresh(deviceId: deviceId, now: DateTime.now());
       _hasUsableConfiguration = bundle != null;
       _setAvailableNodes(bundle);
+      if (bundle == null) await _clearAndroidReconnect();
       _configurationMessage = bundle == null
           ? 'Сервер ещё не выдал конфигурацию этому устройству'
           : 'Проверенное обновление ${bundle.version} сохранено';
     } on BundleException {
       _hasUsableConfiguration = false;
       _setAvailableNodes(null);
+      await _clearAndroidReconnect();
       _configurationMessage =
           'Не удалось проверить подпись или срок обновления';
     } catch (error) {
@@ -791,6 +825,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _hasUsableConfiguration = false;
         _setAvailableNodes(null);
         await vault.clear();
+        await _clearAndroidReconnect();
         _configurationMessage = auth.vpnAccessStatus == 'deleting'
             ? 'Аккаунт удалён'
             : 'Войдите в аккаунт снова';
@@ -810,6 +845,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } catch (_) {
         _hasUsableConfiguration = false;
         _setAvailableNodes(null);
+        await _clearAndroidReconnect();
         _configurationMessage = 'Не удалось получить обновление';
       }
     }
@@ -832,7 +868,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refreshVpnState() async {
     try {
       final state = await _vpnStatus();
-      if (mounted) setState(() => _vpnState = state);
+      if (mounted) {
+        setState(() {
+          _vpnState = state;
+          if (state != 'connected') {
+            _latencyMs = null;
+            _latencyMessage = null;
+            _lastLatencyAt = 0;
+          }
+        });
+      }
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          state == 'connected') {
+        await _syncAndroidPresentation();
+      }
     } catch (_) {
       if (mounted) setState(() => _vpnState = 'error');
     }
@@ -869,6 +918,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _message = null;
       _lastConnectionError = null;
       _latencyMs = null;
+      _lastLatencyAt = 0;
       _latencyMessage = null;
       _measuringLatency = false;
       _latencyRequestId++;
@@ -1099,6 +1149,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _busy = true;
       _latencyMs = null;
+      _lastLatencyAt = 0;
       _latencyMessage = null;
       _measuringLatency = false;
       _latencyRequestId++;
@@ -1140,6 +1191,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _vpnState = state;
         if (state == 'connected') {
           _latencyMs = milliseconds;
+          _lastLatencyAt = DateTime.now().millisecondsSinceEpoch;
         } else {
           _latencyMessage = 'VPN отключился во время проверки';
         }
@@ -1152,10 +1204,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (_) {
       if (mounted && requestId == _latencyRequestId) {
-        setState(
-          () => _latencyMessage =
-              'Не удалось измерить задержку. Проверьте VPN и повторите.',
-        );
+        setState(() {
+          _latencyMessage =
+              'Не удалось измерить задержку. Проверьте VPN и повторите.';
+          _lastLatencyAt = DateTime.now().millisecondsSinceEpoch;
+        });
+        if (defaultTargetPlatform == TargetPlatform.android &&
+            _vpnState == 'connected') {
+          unawaited(_androidUiChannel.invokeMethod<void>('latencyError'));
+        }
       }
     } finally {
       if (mounted && requestId == _latencyRequestId) {
@@ -1224,6 +1281,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       await auth.logout();
       await _vault?.clear();
+      await _clearAndroidReconnect();
       _deviceId = null;
       _hasUsableConfiguration = false;
       _configurationMessage = 'На этом устройстве пока не сохранены';

@@ -55,6 +55,7 @@ class NonaWidgetProvider : AppWidgetProvider() {
                 "connected" -> "Подключено · нажмите, чтобы отключить"
                 "connecting" -> "Подключаем VPN"
                 "disconnecting" -> "Отключаем VPN"
+                "error" -> "Ошибка запуска · откройте Нону"
                 else -> "Не подключено · нажмите, чтобы включить"
             })
             manager.updateAppWidget(id, views)

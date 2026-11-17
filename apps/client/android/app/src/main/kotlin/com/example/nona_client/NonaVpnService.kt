@@ -26,10 +26,13 @@ import java.util.concurrent.Executors
 class NonaVpnService : VpnService() {
     companion object {
         private const val stopAction = "com.example.nona_client.STOP_VPN"
+        private const val restartAction = "com.example.nona_client.RESTART_VPN"
         private val pendingLock = Any()
         private var pendingProfile: String? = null
         @Volatile var state: String = "idle"
             private set
+        @Volatile private var generation = 0L
+        fun connectionGeneration(): Long = generation
 
         fun currentState(context: Context): String {
             if (Build.VERSION.SDK_INT < 30) return state
@@ -104,6 +107,38 @@ class NonaVpnService : VpnService() {
             }
         }
 
+        fun startSaved(context: Context) {
+            if (currentState(context) == "connected" || state == "connecting") return
+            if (prepare(context) != null) {
+                reportStartError(context)
+                return
+            }
+            val profile = NonaReconnectProfile.load(context)
+            if (profile == null) {
+                reportStartError(context)
+                return
+            }
+            try { start(context, profile) }
+            catch (_: Exception) { reportStartError(context) }
+        }
+
+        fun restart(context: Context) {
+            if (currentState(context) != "connected") {
+                startSaved(context)
+                return
+            }
+            try {
+                val intent = Intent(context, NonaVpnService::class.java).setAction(restartAction)
+                if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
+                else context.startService(intent)
+            } catch (_: Exception) { reportStartError(context) }
+        }
+
+        private fun reportStartError(context: Context) {
+            state = "error"
+            NonaPresentation.publishVpn(context)
+        }
+
         fun stop(context: Context) {
             synchronized(pendingLock) { pendingProfile = null }
             // Android keeps VpnService bound while its TUN is open. A plain
@@ -115,15 +150,38 @@ class NonaVpnService : VpnService() {
 
     private val worker = Executors.newSingleThreadExecutor()
     private var tunnel: ParcelFileDescriptor? = null
+    private var currentProfile: String? = null
     @Volatile private var cancelled = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == restartAction) {
+            val profile = currentProfile ?: NonaReconnectProfile.load(this)
+            if (profile == null || prepare(this) != null) {
+                state = "error"
+                NonaPresentation.publishVpn(this)
+                return START_NOT_STICKY
+            }
+            cancelled = true
+            generation++
+            state = "connecting"
+            NonaPresentation.publishVpn(this)
+            worker.execute {
+                cleanup()
+                currentProfile = null
+                cancelled = false
+                NonaPresentation.restoreCountry(this)
+                connect(profile, startId)
+            }
+            return START_NOT_STICKY
+        }
         if (intent?.action == stopAction) {
             cancelled = true
+            generation++
             state = "disconnecting"
             NonaPresentation.publishVpn(this)
             worker.execute {
                 cleanup()
+                currentProfile = null
                 state = "idle"
                 NonaPresentation.setCountry(this, null)
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -136,8 +194,8 @@ class NonaVpnService : VpnService() {
         }
         if (profile == null && state == "connected") return START_NOT_STICKY
         if (profile == null || prepare(this) != null) {
-            state = "idle"
-            NonaWidgetProvider.updateAll(this)
+            state = "error"
+            NonaPresentation.publishVpn(this)
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -145,12 +203,14 @@ class NonaVpnService : VpnService() {
             startVpnForeground()
         } catch (_: Exception) {
             state = "error"
-            NonaWidgetProvider.updateAll(this)
+            NonaPresentation.publishVpn(this)
             stopSelf(startId)
             return START_NOT_STICKY
         }
+        generation++
         state = "connecting"
         NonaPresentation.publishVpn(this)
+        NonaPresentation.restoreCountry(this)
         cancelled = false
         worker.execute { connect(profile, startId) }
         return START_NOT_STICKY
@@ -297,14 +357,19 @@ class NonaVpnService : VpnService() {
                 probe.disconnect()
             }
             state = "connected"
+            currentProfile = profile
+            try { NonaReconnectProfile.save(this, profile) }
+            catch (_: Exception) { /* The active VPN remains usable without a saved restart profile. */ }
             NonaPresentation.publishVpn(this)
         } catch (error: Exception) {
             // Only the stage and exception type are logged. Native errors may
             // contain credential material and must never reach Android logs.
             Log.e("NonaVpnService", "VPN setup failed at $stage (${error.javaClass.simpleName})")
             state = "error"
+            currentProfile = null
             cleanup()
-            NonaWidgetProvider.updateAll(this)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            NonaPresentation.publishVpn(this)
             stopSelf(startId)
         }
     }
@@ -318,6 +383,9 @@ class NonaVpnService : VpnService() {
 
     override fun onRevoke() {
         cancelled = true
+        generation++
+        NonaReconnectProfile.clear(this)
+        NonaPresentation.clearCountry(this)
         stopSelf()
         super.onRevoke()
     }
