@@ -87,7 +87,7 @@ internal object NonaPresentation {
             "latencyAt" to prefs.getLong("latencyAt", 0L))
     }
 
-    private fun flaggedCountry(context: Context): String? = country(context)?.let {
+    fun flaggedCountry(context: Context): String? = country(context)?.let {
         "${when (it) { "Нидерланды" -> "🇳🇱"; "Швеция" -> "🇸🇪"; else -> "🌐" }} $it"
     }
 

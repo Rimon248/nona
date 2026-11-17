@@ -119,9 +119,8 @@ def toggle(x, y, w, large=False):
 def switch_layout(x, y, w):
     card(x, y, w)
     if w == 160:
-        txt(x+80, y+34, 'VPN', 19, CREAM, True, 'mm')
-        toggle(x+24, y+59, 160, True)
-        txt(x+80, y+124, 'ПОДКЛЮЧЕНО', 11, MUTED, True, 'mm')
+        txt(x+80, y+34, 'Нона', 19, CREAM, True, 'mm')
+        toggle(x+24, y+67, 160, True)
     elif w == 320:
         country(x+18, y+41, True)
         toggle(x+205, y+45, 320, False)

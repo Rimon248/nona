@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:padding="5dp" android:background="@drawable/nona_widget_background" android:orientation="vertical" android:gravity="center">
+  <TextView android:id="@+id/widget_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textColor="#FBF0D9" android:textSize="17sp" android:text="Нона" android:gravity="center" android:textStyle="bold" android:layout_marginBottom="8dp"/>
+  <ImageView android:id="@+id/widget_toggle" android:layout_width="56dp" android:layout_height="42dp" android:scaleType="fitCenter" android:contentDescription="Переключить VPN"/>
+  <TextView android:id="@+id/widget_ping_value" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textColor="#FBF0D9" android:textSize="13sp" android:gravity="center" android:textStyle="bold"/>
+</LinearLayout>

@@ -7,8 +7,16 @@ import android.content.Intent
 class NonaActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         when (intent?.action) {
-            NonaPresentation.stopAction -> NonaVpnService.stop(context)
-            NonaPresentation.connectAction -> NonaVpnService.startSaved(context)
+            NonaPresentation.stopAction -> {
+                val pending = goAsync()
+                NonaWidgetProvider.animateToggle(context.applicationContext, false) { pending.finish() }
+                NonaVpnService.stop(context)
+            }
+            NonaPresentation.connectAction -> {
+                val pending = goAsync()
+                NonaWidgetProvider.animateToggle(context.applicationContext, true) { pending.finish() }
+                NonaVpnService.startSaved(context)
+            }
             NonaPresentation.restartAction -> NonaVpnService.restart(context)
             NonaPresentation.pingAction -> {
                 val pending = goAsync()

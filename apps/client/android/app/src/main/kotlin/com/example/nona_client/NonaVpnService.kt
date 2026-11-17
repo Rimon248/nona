@@ -29,6 +29,7 @@ class NonaVpnService : VpnService() {
         private const val restartAction = "com.example.nona_client.RESTART_VPN"
         private val pendingLock = Any()
         private var pendingProfile: String? = null
+        private var pendingAutoPing = false
         @Volatile var state: String = "idle"
             private set
         @Volatile private var generation = 0L
@@ -89,20 +90,24 @@ class NonaVpnService : VpnService() {
             return samples[1]
         }
 
-        fun start(context: Context, profileJson: String) {
+        fun start(context: Context, profileJson: String, autoPing: Boolean = false) {
             require(profileJson.length in 1..(1 shl 20)) { "Invalid profile size" }
             synchronized(pendingLock) {
                 check(pendingProfile == null && state != "connecting" && state != "connected") {
                     "VPN is already starting or connected"
                 }
                 pendingProfile = profileJson
+                pendingAutoPing = autoPing
             }
             val intent = Intent(context, NonaVpnService::class.java)
             try {
                 if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent)
                 else context.startService(intent)
             } catch (error: Exception) {
-                synchronized(pendingLock) { pendingProfile = null }
+                synchronized(pendingLock) {
+                    pendingProfile = null
+                    pendingAutoPing = false
+                }
                 throw error
             }
         }
@@ -118,7 +123,7 @@ class NonaVpnService : VpnService() {
                 reportStartError(context)
                 return
             }
-            try { start(context, profile) }
+            try { start(context, profile, autoPing = true) }
             catch (_: Exception) { reportStartError(context) }
         }
 
@@ -140,7 +145,10 @@ class NonaVpnService : VpnService() {
         }
 
         fun stop(context: Context) {
-            synchronized(pendingLock) { pendingProfile = null }
+            synchronized(pendingLock) {
+                pendingProfile = null
+                pendingAutoPing = false
+            }
             // Android keeps VpnService bound while its TUN is open. A plain
             // stopService() only removes the started state and leaves the
             // bound service (and VPN interface) alive.
@@ -170,7 +178,7 @@ class NonaVpnService : VpnService() {
                 currentProfile = null
                 cancelled = false
                 NonaPresentation.restoreCountry(this)
-                connect(profile, startId)
+                connect(profile, startId, autoPing = true)
             }
             return START_NOT_STICKY
         }
@@ -189,8 +197,11 @@ class NonaVpnService : VpnService() {
             }
             return START_NOT_STICKY
         }
-        val profile = synchronized(pendingLock) {
-            pendingProfile.also { pendingProfile = null }
+        val (profile, autoPing) = synchronized(pendingLock) {
+            (pendingProfile to pendingAutoPing).also {
+                pendingProfile = null
+                pendingAutoPing = false
+            }
         }
         if (profile == null && state == "connected") return START_NOT_STICKY
         if (profile == null || prepare(this) != null) {
@@ -212,7 +223,7 @@ class NonaVpnService : VpnService() {
         NonaPresentation.publishVpn(this)
         NonaPresentation.restoreCountry(this)
         cancelled = false
-        worker.execute { connect(profile, startId) }
+        worker.execute { connect(profile, startId, autoPing) }
         return START_NOT_STICKY
     }
 
@@ -261,7 +272,7 @@ class NonaVpnService : VpnService() {
         }
     }
 
-    private fun connect(profile: String, startId: Int) {
+    private fun connect(profile: String, startId: Int, autoPing: Boolean) {
         var stage = "profile"
         try {
             if (cancelled) throw IllegalStateException("VPN was stopped")
@@ -361,6 +372,21 @@ class NonaVpnService : VpnService() {
             try { NonaReconnectProfile.save(this, profile) }
             catch (_: Exception) { /* The active VPN remains usable without a saved restart profile. */ }
             NonaPresentation.publishVpn(this)
+            if (autoPing) {
+                val connectedGeneration = connectionGeneration()
+                Thread({
+                    try {
+                        val latency = measureLatency(this)
+                        if (connectedGeneration == connectionGeneration() && currentState(this) == "connected") {
+                            NonaPresentation.setLatency(this, latency)
+                        }
+                    } catch (_: Exception) {
+                        if (connectedGeneration == connectionGeneration() && currentState(this) == "connected") {
+                            NonaPresentation.setLatencyError(this)
+                        }
+                    }
+                }, "nona-auto-ping").start()
+            }
         } catch (error: Exception) {
             // Only the stage and exception type are logged. Native errors may
             // contain credential material and must never reach Android logs.
