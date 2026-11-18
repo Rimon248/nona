@@ -28,6 +28,7 @@ class NonaControlScreen extends StatelessWidget {
     required this.onRefresh,
     required this.busy,
     required this.measuringLatency,
+    this.syncingConfiguration = false,
     required this.onMeasureLatency,
     required this.routingAvailable,
     required this.onOpenRouting,
@@ -75,6 +76,7 @@ class NonaControlScreen extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final bool busy;
   final bool measuringLatency;
+  final bool syncingConfiguration;
   final VoidCallback? onMeasureLatency;
   final bool routingAvailable;
   final VoidCallback? onOpenRouting;
@@ -675,6 +677,7 @@ class NonaControlScreen extends StatelessWidget {
                 loading:
                     vpnState == 'connecting' ||
                     measuringLatency ||
+                    syncingConfiguration ||
                     (busy &&
                         vpnState != 'connected' &&
                         vpnState != 'disconnecting'),
