@@ -108,6 +108,10 @@ class NonaControlScreen extends StatelessWidget {
 
   bool get _connected => vpnState == 'connected';
 
+  bool get _showAccountVersions =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.windows;
+
   String get _statusLabel => switch (vpnState) {
     'connected' => 'Подключено',
     'connecting' => 'Подключение',
@@ -910,16 +914,36 @@ class NonaControlScreen extends StatelessWidget {
     );
   }
 
-  Widget _desktopPage(BuildContext context) => RefreshIndicator(
-    onRefresh: onRefresh,
-    child: SingleChildScrollView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(46, 36, 46, 32),
-      child: selectedTab == 0
-          ? _desktopStatus(context)
-          : _desktopDetail(context),
-    ),
-  );
+  Widget _desktopPage(BuildContext context) {
+    final showVersions = selectedTab == 2 && _showAccountVersions;
+    final page = RefreshIndicator(
+      onRefresh: onRefresh,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(46, 36, 46, showVersions ? 84 : 32),
+        child: selectedTab == 0
+            ? _desktopStatus(context)
+            : _desktopDetail(context),
+      ),
+    );
+    if (!showVersions) return page;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        page,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Container(
+            color: NonaColor.navy,
+            padding: const EdgeInsets.fromLTRB(46, 12, 46, 32),
+            child: _accountVersions(),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _sideItem(BuildContext context, String label, int index) => InkWell(
     onTap: () => onSelectTab(index),
@@ -1219,14 +1243,42 @@ class NonaControlScreen extends StatelessWidget {
     ),
   );
 
-  Widget _mobileDetail(BuildContext context) => RefreshIndicator(
-    onRefresh: onRefresh,
-    child: SingleChildScrollView(
-      key: ValueKey('detail-$selectedTab'),
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(26, 8, 26, 18),
-      child: _detailContent(context),
-    ),
+  Widget _mobileDetail(BuildContext context) {
+    final showVersions = selectedTab == 2 && _showAccountVersions;
+    final page = RefreshIndicator(
+      onRefresh: onRefresh,
+      child: SingleChildScrollView(
+        key: ValueKey('detail-$selectedTab'),
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(26, 8, 26, showVersions ? 68 : 18),
+        child: _detailContent(context),
+      ),
+    );
+    if (!showVersions) return page;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        page,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Container(
+            color: NonaColor.navy,
+            padding: const EdgeInsets.fromLTRB(26, 12, 26, 18),
+            child: _accountVersions(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _accountVersions() => Text(
+    'Нона ${appVersion ?? '—'}     ·     Ядро VPN ${engineVersion ?? '—'}',
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    textAlign: TextAlign.center,
+    style: const TextStyle(color: NonaColor.muted, fontSize: 12),
   );
 
   Widget _desktopDetail(BuildContext context) => Column(
@@ -1621,16 +1673,6 @@ class NonaControlScreen extends StatelessWidget {
       if (busy) ...[
         const SizedBox(height: 20),
         const LinearProgressIndicator(),
-      ],
-      if (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.windows) ...[
-        const SizedBox(height: 28),
-        Text(
-          'Нона ${appVersion ?? '—'}     ·     Ядро VPN ${engineVersion ?? '—'}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: NonaColor.muted, fontSize: 12),
-        ),
       ],
     ],
   );

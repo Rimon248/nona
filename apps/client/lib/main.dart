@@ -143,10 +143,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _installingAppUpdate = false;
   String? _appUpdateError;
 
-  static const bool _updateScreenPreview = bool.fromEnvironment(
-    'NONA_UPDATE_SCREEN_PREVIEW',
-  );
-
   static const MethodChannel _windowChannel = MethodChannel('nona.window');
   static const MethodChannel _androidUiChannel = MethodChannel(
     'nona.android_ui',
@@ -499,17 +495,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final fullScreenUpdate =
         defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.windows;
-    if (_updateScreenPreview && fullScreenUpdate) {
-      update = AppUpdate(
-        tag: 'preview-update-screen',
-        version: '0.1.7',
-        downloadUrl: Uri.https('github.com', '/Rimon248/nona/releases'),
-        sha256: '',
-      );
-    }
     if (update != null) {
-      if (!_updateScreenPreview &&
-          defaultTargetPlatform == TargetPlatform.android &&
+      if (defaultTargetPlatform == TargetPlatform.android &&
           _settings.updateNotifications) {
         unawaited(
           _androidUiChannel.invokeMethod<void>('showUpdate', {
@@ -543,12 +530,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _dismissAppUpdate() async {
     final update = _pendingAppUpdate;
     if (update == null || _installingAppUpdate) return;
-    if (!_updateScreenPreview) {
-      try {
-        await _preferences.setString('dismissed_update_tag', update.tag);
-      } catch (_) {
-        // A preferences failure should not trap the user on this screen.
-      }
+    try {
+      await _preferences.setString('dismissed_update_tag', update.tag);
+    } catch (_) {
+      // A preferences failure should not trap the user on this screen.
     }
     if (mounted) _finishAppUpdate();
   }
@@ -567,13 +552,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _installPendingAppUpdate() async {
     final update = _pendingAppUpdate;
     if (update == null || _installingAppUpdate) return;
-    if (_updateScreenPreview) {
-      setState(
-        () => _appUpdateError =
-            'Это проверочный экран. Обновление здесь не скачивается.',
-      );
-      return;
-    }
     setState(() {
       _installingAppUpdate = true;
       _appUpdateError = null;
