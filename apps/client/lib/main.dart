@@ -38,6 +38,7 @@ import 'nona_control_screen.dart';
 import 'nona_control_theme.dart';
 import 'nona_motion.dart';
 import 'nona_startup_screen.dart';
+import 'nona_update_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -138,6 +139,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _lastWindowsTrayState;
   String? _installedAppVersion;
   String? _installedEngineVersion;
+  AppUpdate? _pendingAppUpdate;
+  bool _installingAppUpdate = false;
+  String? _appUpdateError;
+
+  static const bool _updateScreenPreview = bool.fromEnvironment(
+    'NONA_UPDATE_SCREEN_PREVIEW',
+  );
 
   static const MethodChannel _windowChannel = MethodChannel('nona.window');
   static const MethodChannel _androidUiChannel = MethodChannel(
@@ -488,8 +496,20 @@ class _HomeScreenState extends State<HomeScreen> {
         const Duration(milliseconds: 900) - DateTime.now().difference(started);
     if (remaining > Duration.zero) await Future<void>.delayed(remaining);
     if (!mounted) return;
+    final fullScreenUpdate =
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.windows;
+    if (_updateScreenPreview && fullScreenUpdate) {
+      update = AppUpdate(
+        tag: 'preview-update-screen',
+        version: '0.1.7',
+        downloadUrl: Uri.https('github.com', '/Rimon248/nona/releases'),
+        sha256: '',
+      );
+    }
     if (update != null) {
-      if (defaultTargetPlatform == TargetPlatform.android &&
+      if (!_updateScreenPreview &&
+          defaultTargetPlatform == TargetPlatform.android &&
           _settings.updateNotifications) {
         unawaited(
           _androidUiChannel.invokeMethod<void>('showUpdate', {
@@ -498,10 +518,11 @@ class _HomeScreenState extends State<HomeScreen> {
           }),
         );
       }
-      await _offerAppUpdate(update);
+      if (!fullScreenUpdate) await _offerAppUpdate(update);
     }
     if (mounted) {
       setState(() {
+        _pendingAppUpdate = fullScreenUpdate ? update : null;
         _starting = false;
         _cardSortEntrance = true;
       });
@@ -516,6 +537,74 @@ class _HomeScreenState extends State<HomeScreen> {
           _androidUiChannel.invokeMethod<void>('requestNotificationPermission'),
         );
       }
+    }
+  }
+
+  Future<void> _dismissAppUpdate() async {
+    final update = _pendingAppUpdate;
+    if (update == null || _installingAppUpdate) return;
+    if (!_updateScreenPreview) {
+      try {
+        await _preferences.setString('dismissed_update_tag', update.tag);
+      } catch (_) {
+        // A preferences failure should not trap the user on this screen.
+      }
+    }
+    if (mounted) _finishAppUpdate();
+  }
+
+  void _finishAppUpdate() {
+    setState(() {
+      _pendingAppUpdate = null;
+      _appUpdateError = null;
+      _cardSortEntrance = true;
+    });
+    Future<void>.delayed(const Duration(milliseconds: 950), () {
+      if (mounted) setState(() => _cardSortEntrance = false);
+    });
+  }
+
+  Future<void> _installPendingAppUpdate() async {
+    final update = _pendingAppUpdate;
+    if (update == null || _installingAppUpdate) return;
+    if (_updateScreenPreview) {
+      setState(
+        () => _appUpdateError =
+            'Это проверочный экран. Обновление здесь не скачивается.',
+      );
+      return;
+    }
+    setState(() {
+      _installingAppUpdate = true;
+      _appUpdateError = null;
+    });
+    String? error;
+    try {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        await AndroidAppInstaller().install(update);
+      } else if (defaultTargetPlatform == TargetPlatform.windows) {
+        final releasePage = Uri.https(
+          'github.com',
+          '/Rimon248/nona/releases/tag/${update.tag}',
+        );
+        await Process.start('cmd', ['/c', 'start', '', releasePage.toString()]);
+      }
+    } on PlatformException catch (failure) {
+      error = switch (failure.code) {
+        'INSTALL_PERMISSION' =>
+          'Разрешите Ноне установку обновлений и повторите попытку.',
+        'BAD_APK' => 'Скачанное обновление не прошло проверку.',
+        _ => 'Не удалось открыть обновление. Попробуйте позже.',
+      };
+    } catch (_) {
+      error = 'Не удалось открыть обновление. Попробуйте позже.';
+    }
+    if (!mounted) return;
+    setState(() => _installingAppUpdate = false);
+    if (error == null) {
+      _finishAppUpdate();
+    } else {
+      setState(() => _appUpdateError = error);
     }
   }
 
@@ -1558,6 +1647,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (defaultTargetPlatform == TargetPlatform.windows) {
       _scheduleWindowsTrayUpdate();
     }
+    final stage = _starting
+        ? 'startup-stage'
+        : _pendingAppUpdate != null
+        ? 'update-stage'
+        : 'main-stage';
     return AnimatedSwitcher(
       duration: NonaMotion.duration(context, NonaMotion.startup),
       reverseDuration: NonaMotion.duration(
@@ -1568,12 +1662,19 @@ class _HomeScreenState extends State<HomeScreen> {
         fit: StackFit.expand,
         children: [?currentChild, ...previousChildren],
       ),
-      transitionBuilder: (child, animation) =>
-          child.key == const ValueKey('main-stage')
-          ? child
-          : FadeTransition(opacity: animation, child: child),
+      transitionBuilder: (child, animation) {
+        // The update screen has already faded its text and finished the navy
+        // colour wipe. Removing its outgoing layer prevents a one-frame flash.
+        if (stage == 'main-stage' &&
+            child.key == const ValueKey('update-stage')) {
+          return const SizedBox.expand();
+        }
+        return child.key == ValueKey(stage)
+            ? child
+            : FadeTransition(opacity: animation, child: child);
+      },
       child: KeyedSubtree(
-        key: ValueKey(_starting ? 'startup-stage' : 'main-stage'),
+        key: ValueKey(stage),
         child: RepaintBoundary(child: _buildContent(context)),
       ),
     );
@@ -1585,6 +1686,19 @@ class _HomeScreenState extends State<HomeScreen> {
         status: _startupStatus,
         figure: widget.startupFigure,
         appVersion: _installedAppVersion,
+      );
+    }
+    final pendingUpdate = _pendingAppUpdate;
+    if (pendingUpdate != null) {
+      return NonaUpdateScreen(
+        installedVersion: _installedAppVersion ?? '—',
+        availableVersion: pendingUpdate.version,
+        android: defaultTargetPlatform == TargetPlatform.android,
+        cardSortEntrance: _cardSortEntrance,
+        busy: _installingAppUpdate,
+        error: _appUpdateError,
+        onLater: () => unawaited(_dismissAppUpdate()),
+        onUpdate: () => unawaited(_installPendingAppUpdate()),
       );
     }
     final message = _message;

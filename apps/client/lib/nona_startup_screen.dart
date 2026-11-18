@@ -166,13 +166,16 @@ class _NonaStartupScreenState extends State<NonaStartupScreen> {
               ),
               if (widget.appVersion case final version?)
                 Positioned(
-                  left: mobile ? 31 * scale : 73 * scale,
+                  left: 0,
+                  right: 0,
                   bottom: (mobile ? 13 : 22) * scale,
-                  child: Text(
-                    'Версия $version',
-                    style: TextStyle(
-                      fontSize: (mobile ? 12 : 13) * scale,
-                      color: NonaColor.muted,
+                  child: Center(
+                    child: Text(
+                      'Версия $version',
+                      style: TextStyle(
+                        fontSize: (mobile ? 12 : 13) * scale,
+                        color: NonaColor.muted,
+                      ),
                     ),
                   ),
                 ),

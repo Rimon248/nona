@@ -1625,9 +1625,12 @@ class NonaControlScreen extends StatelessWidget {
       if (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.windows) ...[
         const SizedBox(height: 28),
-        const _Eyebrow('Установлено на устройстве'),
-        _detailRow('Версия Ноны', appVersion ?? 'Определяем…'),
-        _detailRow('Версия ядра VPN', engineVersion ?? 'Определяем…'),
+        Text(
+          'Нона ${appVersion ?? '—'}     ·     Ядро VPN ${engineVersion ?? '—'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: NonaColor.muted, fontSize: 12),
+        ),
       ],
     ],
   );

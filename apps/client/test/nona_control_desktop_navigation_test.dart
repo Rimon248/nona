@@ -63,8 +63,7 @@ void main() {
 
     await tester.tap(find.text('Аккаунт'));
     await tester.pumpAndSettle();
-    expect(find.text('0.1.6'), findsOneWidget);
-    expect(find.text('26.10.31'), findsOneWidget);
+    expect(find.text('Нона 0.1.6     ·     Ядро VPN 26.10.31'), findsOneWidget);
 
     await tester.tap(find.text('Настройки'));
     await tester.pumpAndSettle();

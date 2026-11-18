@@ -57,6 +57,10 @@ void main() {
       expect(find.text('Встречаемся\nчерез мгновение.'), findsOneWidget);
       expect(find.text('Проверяем вход и настройки'), findsOneWidget);
       expect(find.text('Версия 0.1.6'), findsOneWidget);
+      expect(
+        (tester.getCenter(find.text('Версия 0.1.6')).dx - size.width / 2).abs(),
+        lessThan(1),
+      );
     });
   }
 }
