@@ -68,7 +68,21 @@ class DesktopEngineProfile {
 
     final outbounds = (decoded['outbounds'] as List).map((raw) {
       if (raw is! Map) throw const FormatException('Invalid desktop outbound');
-      return Map<String, Object?>.from(raw);
+      final outbound = Map<String, Object?>.from(raw);
+      if (includeWindowsProcesses) {
+        final stream = Map<String, Object?>.from(
+          (outbound['streamSettings'] as Map?) ?? const {},
+        );
+        final sockopt = Map<String, Object?>.from(
+          (stream['sockopt'] as Map?) ?? const {},
+        );
+        // The Windows tunnel and its DNS resolver are IPv4-only. Resolve the
+        // proxy server itself over IPv4 as well.
+        sockopt['domainStrategy'] = 'UseIPv4';
+        stream['sockopt'] = sockopt;
+        outbound['streamSettings'] = stream;
+      }
+      return outbound;
     }).toList();
     if (outbounds.any((outbound) => outbound['tag'] != 'proxy')) {
       throw const FormatException('Unexpected desktop outbound');
@@ -122,18 +136,20 @@ class DesktopEngineProfile {
         'fakedns': [
           {'ipPool': '198.19.0.0/16', 'poolSize': 65535},
         ],
-      if (useFakeDns)
+      if (includeWindowsProcesses)
         'dns': {
           'queryStrategy': 'UseIPv4',
+          // Xray skips FakeDNS for its own outbound IPv4 lookups. Keep the
+          // real resolver available for those same domains.
           'servers': [
-            {
-              'address': 'fakedns',
-              'domains': directDomains.toList(),
-              'skipFallback': true,
-            },
+            if (useFakeDns)
+              {
+                'address': 'fakedns',
+                'domains': directDomains.toList(),
+                'skipFallback': true,
+              },
             '1.1.1.1',
           ],
-          'disableFallbackIfMatch': true,
         },
       'inbounds': [
         {
@@ -149,13 +165,20 @@ class DesktopEngineProfile {
       ],
       'outbounds': [
         ...outbounds,
-        {'tag': 'direct', 'protocol': 'freedom'},
-        if (useFakeDns) {'tag': 'dns-out', 'protocol': 'dns'},
+        {
+          'tag': 'direct',
+          'protocol': 'freedom',
+          if (includeWindowsProcesses)
+            'streamSettings': {
+              'sockopt': {'domainStrategy': 'UseIPv4'},
+            },
+        },
+        if (includeWindowsProcesses) {'tag': 'dns-out', 'protocol': 'dns'},
       ],
       'routing': {
         'domainStrategy': 'AsIs',
         'rules': [
-          if (useFakeDns)
+          if (includeWindowsProcesses)
             {
               'type': 'field',
               'inboundTag': ['nona-tun'],
@@ -198,7 +221,6 @@ class DesktopEngineProfile {
               '172.16.0.0/12',
               '192.0.0.0/24',
               '192.168.0.0/16',
-              '198.18.0.0/15',
               '224.0.0.0/4',
               '240.0.0.0/4',
               '::1/128',

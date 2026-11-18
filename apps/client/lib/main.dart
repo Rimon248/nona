@@ -1694,6 +1694,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _login() async {
     final auth = _auth;
     if (auth == null) return;
+    var loggedIn = false;
     _authOperationGeneration++;
     _deferredConfigurationCheck = false;
     setState(() {
@@ -1703,7 +1704,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await auth.loginWithKeycloak();
       _authenticationFailed = false;
-      await _registerDevice(auth);
+      loggedIn = true;
     } on AuthException catch (error) {
       if (mounted) {
         setState(
@@ -1724,8 +1725,16 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       await _closeAuthenticationWindow();
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          if (loggedIn) _syncingConfiguration = true;
+        });
+      }
     }
+    // Show the main screen while device registration and configuration sync
+    // run, so the status dot can animate for the full operation.
+    if (loggedIn && mounted) unawaited(_registerDevice(auth));
   }
 
   Future<void> _logout() async {
