@@ -1,9 +1,11 @@
 package com.example.nona_client
 
+import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
@@ -80,6 +82,11 @@ class NonaWidgetProvider : AppWidgetProvider() {
             val checked = connected || state == "connecting"
             val progress = animatedProgress ?: if (checked) 1f else 0f
             val views = RemoteViews(context.packageName, kind)
+            views.setOnClickPendingIntent(R.id.widget_root,
+                PendingIntent.getActivity(context, id,
+                    Intent(context, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             val switchScale = when (kind) {
                 R.layout.nona_widget_square -> 1.18f
                 R.layout.nona_widget_spacious3 -> 1.5f
