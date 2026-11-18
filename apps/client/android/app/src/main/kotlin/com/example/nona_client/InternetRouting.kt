@@ -9,11 +9,13 @@ import android.os.Build
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.IDN
+import java.io.File
 
 /** Local routing settings. The two catalogues are suggestions, never proof of origin. */
 internal object InternetRouting {
     private const val preferences = "nona_internet_routing_v2"
     private const val policyKey = "policy"
+    private const val installMarker = "nona_routing_install_v1"
     private val packagePattern = Regex("^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$")
     private val domainPattern = Regex("^[a-z0-9-]+(\\.[a-z0-9-]+)+$")
 
@@ -143,24 +145,49 @@ internal object InternetRouting {
     }
 
     fun read(context: Context): Policy {
+        discardRestoredPolicyOnFreshInstall(context)
         val saved = context.getSharedPreferences(preferences, Context.MODE_PRIVATE).getString(policyKey, null)
         if (saved == null) {
             // Preserve existing manually excluded applications during migration.
             return Policy(appOverrides = AndroidAppExclusions.readLegacy(context).associateWith { true })
         }
-        val json = JSONObject(saved)
-        val siteOverrides = json.getJSONObject("siteOverrides")
-        val appOverrides = json.getJSONObject("appOverrides")
-        val raw = mapOf(
-            "sitesMode" to json.getString("sitesMode"),
-            "appsMode" to json.getString("appsMode"),
-            "siteOverrides" to siteOverrides.keys().asSequence().associateWith { siteOverrides.getBoolean(it) },
-            "appOverrides" to appOverrides.keys().asSequence().associateWith { appOverrides.getBoolean(it) },
-            "customSites" to (0 until json.getJSONArray("customSites").length()).map {
-                json.getJSONArray("customSites").getString(it)
-            },
-        )
-        return parsed(raw)
+        return try {
+            val json = JSONObject(saved)
+            val siteOverrides = json.getJSONObject("siteOverrides")
+            val appOverrides = json.getJSONObject("appOverrides")
+            val raw = mapOf(
+                "sitesMode" to json.getString("sitesMode"),
+                "appsMode" to json.getString("appsMode"),
+                "siteOverrides" to siteOverrides.keys().asSequence().associateWith { siteOverrides.getBoolean(it) },
+                "appOverrides" to appOverrides.keys().asSequence().associateWith { appOverrides.getBoolean(it) },
+                "customSites" to (0 until json.getJSONArray("customSites").length()).map {
+                    json.getJSONArray("customSites").getString(it)
+                },
+            )
+            parsed(raw)
+        } catch (_: Exception) {
+            // A damaged restored preference must not disable all default
+            // Russian routes or make the routing screen unavailable.
+            Policy()
+        }
+    }
+
+    @Synchronized
+    private fun discardRestoredPolicyOnFreshInstall(context: Context) {
+        val marker = File(context.noBackupFilesDir, installMarker)
+        if (marker.exists()) return
+        @Suppress("DEPRECATION")
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        // Android can restore preferences from an older installation before
+        // the first launch. An update keeps the original firstInstallTime;
+        // a clean installation starts a new install timeline.
+        if (kotlin.math.abs(info.lastUpdateTime - info.firstInstallTime) < 5_000L) {
+            context.getSharedPreferences(preferences, Context.MODE_PRIVATE)
+                .edit().clear().commit()
+            context.getSharedPreferences("nona_app_routing_v1", Context.MODE_PRIVATE)
+                .edit().clear().commit()
+        }
+        check(marker.createNewFile()) { "Could not record routing installation" }
     }
 
     fun save(context: Context, raw: Map<*, *>): Boolean {

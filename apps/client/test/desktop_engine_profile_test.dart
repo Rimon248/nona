@@ -40,8 +40,10 @@ void main() {
     expect(rules[2]['outboundTag'], 'proxy');
     expect(rules[3]['domain'], ['domain:ru']);
     expect(rules[3]['outboundTag'], 'direct');
+    expect((rules.last['ip'] as List), isNot(contains('198.18.0.0/15')));
     final dns = config['dns'] as Map;
     expect(dns['queryStrategy'], 'UseIPv4');
+    expect(dns['disableFallbackIfMatch'], isNull);
     expect(
       (dns['servers'] as List).first['domains'],
       containsAll(['domain:ru', 'domain:extra.example']),
@@ -58,21 +60,32 @@ void main() {
     expect(settings['dns'], ['1.1.1.1']);
     expect(settings['autoSystemRoutingTable'], ['0.0.0.0/0']);
     expect(settings['autoSystemWfpBlockLeak'], ['dns', 'misconfigtun']);
+    expect(
+      (config['outbounds'] as List)
+          .first['streamSettings']['sockopt']['domainStrategy'],
+      'UseIPv4',
+    );
   });
 
-  test('Windows without direct sites keeps ordinary DNS and IPv4 routes', () {
-    const proxy = '{"outbounds":[{"tag":"proxy","protocol":"freedom"}]}';
-    final config = jsonDecode(DesktopEngineProfile.windowsTun(proxy)) as Map;
-    expect(config.containsKey('fakedns'), false);
-    expect(config.containsKey('dns'), false);
-    expect(
-      (config['outbounds'] as List).where((o) => o['tag'] == 'dns-out'),
-      isEmpty,
-    );
-    final inbound = (config['inbounds'] as List).single as Map;
-    expect(inbound['sniffing']['routeOnly'], true);
-    expect(inbound['settings']['autoSystemRoutingTable'], ['0.0.0.0/0']);
-  });
+  test(
+    'Windows without direct sites still resolves DNS inside IPv4 tunnel',
+    () {
+      const proxy = '{"outbounds":[{"tag":"proxy","protocol":"freedom"}]}';
+      final config = jsonDecode(DesktopEngineProfile.windowsTun(proxy)) as Map;
+      expect(config.containsKey('fakedns'), false);
+      expect(config['dns']['queryStrategy'], 'UseIPv4');
+      expect(config['dns']['servers'], ['1.1.1.1']);
+      expect(
+        (config['outbounds'] as List).where((o) => o['tag'] == 'dns-out'),
+        hasLength(1),
+      );
+      final rules = config['routing']['rules'] as List;
+      expect(rules.first['outboundTag'], 'dns-out');
+      final inbound = (config['inbounds'] as List).single as Map;
+      expect(inbound['sniffing']['routeOnly'], true);
+      expect(inbound['settings']['autoSystemRoutingTable'], ['0.0.0.0/0']);
+    },
+  );
 
   test(
     'Windows routes a selected process directly, including a closed app',
@@ -94,11 +107,14 @@ void main() {
         DesktopEngineProfile.windowsTun(proxy, routing: state),
       ) as Map<String, dynamic>;
       final windowsRules = (windows['routing'] as Map)['rules'] as List;
+      final processRule = windowsRules.firstWhere(
+        (rule) => rule['process'] != null,
+      );
       expect(
-        windowsRules.first['process'],
+        processRule['process'],
         containsAll(['chrome', 'anotherApp']),
       );
-      expect(windowsRules.first['process'], isNot(contains('bad/path')));
+      expect(processRule['process'], isNot(contains('bad/path')));
 
       final mac = jsonDecode(
         DesktopEngineProfile.macOsTun(proxy, tunName: 'utun10', routing: state),
@@ -112,4 +128,43 @@ void main() {
       );
     },
   );
+
+  test('a bypassed browser takes precedence over every site rule', () {
+    const state = InternetRoutingState(
+      apps: [LaunchableApp(packageName: 'chrome', label: 'chrome.exe')],
+      sites: [
+        RussianSite(domain: 'ru', label: '.ru', essential: false, zone: true),
+        RussianSite(
+          domain: 'developer.apple.com',
+          label: 'Apple Developer',
+          essential: false,
+          zone: false,
+        ),
+      ],
+      appCatalogue: {},
+      policy: InternetPolicy(
+        sitesMode: DirectMode.all,
+        appsMode: DirectMode.off,
+        siteOverrides: {'developer.apple.com': false},
+        appOverrides: {'chrome': true},
+        customSites: [],
+      ),
+    );
+    const proxy = '{"outbounds":[{"tag":"proxy","protocol":"freedom"}]}';
+    final config = jsonDecode(
+      DesktopEngineProfile.windowsTun(proxy, routing: state),
+    ) as Map<String, dynamic>;
+    final rules = config['routing']['rules'] as List;
+    final processIndex = rules.indexWhere((rule) => rule['process'] != null);
+    final siteIndex = rules.indexWhere((rule) => rule['domain'] != null);
+    expect(rules[processIndex]['process'], contains('chrome'));
+    expect(rules[processIndex]['outboundTag'], 'direct');
+    expect(processIndex, lessThan(siteIndex));
+    expect(
+      rules
+          .where((rule) => rule['domain'] != null)
+          .map((rule) => rule['outboundTag']),
+      containsAll(['direct', 'proxy']),
+    );
+  });
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -46,6 +47,17 @@ class FakeOidcSession implements OidcSession {
   Future<void> forgetUser() async => signedIn = false;
 }
 
+class DelayedOidcSession extends FakeOidcSession {
+  final requested = Completer<void>();
+  final token = Completer<String?>();
+
+  @override
+  Future<String?> accessToken({bool forceRefresh = false}) {
+    if (!requested.isCompleted) requested.complete();
+    return token.future;
+  }
+}
+
 String tokenResponse(String access, String refresh) => jsonEncode({
   'account_id': 'account-a',
   'access_token': access,
@@ -55,6 +67,28 @@ String tokenResponse(String access, String refresh) => jsonEncode({
 });
 
 void main() {
+  test('a late restore cannot reopen a failed login', () async {
+    final oidc = DelayedOidcSession()..signedIn = true;
+    final auth = AuthClient(
+      baseUri: Uri.parse('https://nona.example.invalid'),
+      secureStore: MemorySecureStore(),
+      oidcSession: oidc,
+      httpClient: MockClient(
+        (_) async => http.Response(
+          '{"account_id":"account-k","username":"roman","vpn_access":"approved"}',
+          200,
+        ),
+      ),
+    );
+    final pending = auth.restore();
+    await oidc.requested.future;
+    auth.invalidatePendingRestore();
+    oidc.token.complete('keycloak-access');
+    await expectLater(pending, throwsA(isA<AuthException>()));
+    expect(auth.signedIn, isFalse);
+    expect(auth.accountId, isNull);
+  });
+
   test('a deleted Keycloak account cannot keep its prior approval', () async {
     final oidc = FakeOidcSession();
     var deleted = false;

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nona_client/app_settings.dart';
 import 'package:nona_client/connection_selection.dart';
 import 'package:nona_client/nona_control_screen.dart';
+import 'package:nona_client/nona_motion.dart';
 
 void main() {
   tearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -21,12 +22,12 @@ void main() {
         home: StatefulBuilder(
           builder: (context, update) => NonaControlScreen(
             selectedTab: selectedTab,
-            appVersion: '0.1.6',
-            engineVersion: '26.10.31',
+            appVersion: '0.1.7',
+            engineVersion: '26.11.9',
             previousTab: 0,
             cardSortEntrance: false,
             onSelectTab: (tab) => update(() => selectedTab = tab),
-            vpnState: 'idle',
+            vpnState: 'connected',
             signedIn: false,
             accountConfigured: false,
             actionLabel: 'Войти',
@@ -35,6 +36,7 @@ void main() {
             onRefresh: () async {},
             busy: false,
             measuringLatency: false,
+            syncingConfiguration: true,
             onMeasureLatency: null,
             routingAvailable: false,
             onOpenRouting: null,
@@ -61,9 +63,14 @@ void main() {
       ),
     );
 
+    expect(
+      tester.widget<NonaStatusDot>(find.byType(NonaStatusDot)).active,
+      isTrue,
+    );
+
     await tester.tap(find.text('Аккаунт'));
     await tester.pumpAndSettle();
-    expect(find.text('Нона 0.1.6     ·     Ядро VPN 26.10.31'), findsOneWidget);
+    expect(find.text('Нона 0.1.7     ·     Ядро VPN 26.11.9'), findsOneWidget);
 
     await tester.tap(find.text('Настройки'));
     await tester.pumpAndSettle();

@@ -2,4 +2,6 @@
 <full-backup-content>
     <exclude domain="sharedpref" path="FlutterSecureStorage" />
     <exclude domain="sharedpref" path="nona_vpn_reconnect.xml" />
+    <exclude domain="sharedpref" path="nona_internet_routing_v2.xml" />
+    <exclude domain="sharedpref" path="nona_app_routing_v1.xml" />
 </full-backup-content>

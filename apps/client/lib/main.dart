@@ -106,6 +106,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String _configurationMessage = 'На этом устройстве пока не сохранены';
   bool _hasUsableConfiguration = false;
   bool _busy = false;
+  bool _syncingConfiguration = false;
+  bool _deferredConfigurationCheck = false;
+  bool _authenticationFailed = false;
+  int _authOperationGeneration = 0;
   String _vpnState = 'idle';
   String? _lastConnectionError;
   String? _vpnTransport;
@@ -257,10 +261,15 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_vpnState == 'other-vpn' && !_busy) {
         unawaited(_refreshVpnState());
       }
-      if (!mounted || _busy || _auth?.signedIn != true || _deviceId == null) {
+      if (!mounted ||
+          _busy ||
+          _syncingConfiguration ||
+          _authenticationFailed ||
+          _auth?.signedIn != true ||
+          (_deviceId == null && !_deferredConfigurationCheck)) {
         return;
       }
-      final interval = _hasUsableConfiguration
+      final interval = _deferredConfigurationCheck || _hasUsableConfiguration
           ? const Duration(minutes: 2)
           : const Duration(seconds: 15);
       final lastCheck = _lastConfigurationCheck;
@@ -379,7 +388,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _exitWindows();
       return;
     }
-    if (_starting || _busy) return;
+    if (_starting || _busy || _syncingConfiguration) return;
     if (action == 'connect' || action == 'restart') {
       await _handleQuickAction(action == 'connect' ? 'CONNECT' : 'RESTART');
       if (_vpnState != 'connected') {
@@ -449,17 +458,103 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _restore() async {
     final auth = _auth;
     if (auth == null) return;
+    final generation = ++_authOperationGeneration;
     setState(() => _busy = true);
+    var restored = false;
+    var failureMessage = 'Войдите в аккаунт, чтобы продолжить.';
     try {
-      await _restoreConnectionPreference();
-      if (await auth.restore()) await _registerDevice(auth);
-    } catch (_) {
-      if (mounted) {
-        setState(() => _message = 'Не удалось проверить сохранённую сессию');
+      try {
+        await _restoreConnectionPreference().timeout(
+          const Duration(seconds: 4),
+        );
+      } on TimeoutException {
+        // Account restoration must continue even if saved UI settings are slow.
       }
+      restored = await auth.restore().timeout(const Duration(seconds: 18));
+    } on TimeoutException {
+      failureMessage = 'Не удалось завершить проверку входа. Войдите снова.';
+    } catch (_) {
+      failureMessage = 'Не удалось проверить сохранённый вход. Войдите снова.';
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (generation == _authOperationGeneration) {
+        if (restored) {
+          _authenticationFailed = false;
+          if (mounted) unawaited(_resumeRestoredSession(auth, generation));
+        } else {
+          final stopped = await _stopVpnAfterFailedAuthentication();
+          _message = stopped ? failureMessage : 'Вход не подтверждён. Не удалось отключить VPN. Проверьте состояние подключения и войдите снова.';
+        }
+        if (mounted && generation == _authOperationGeneration) {
+          setState(() => _busy = false);
+        }
+      }
     }
+  }
+
+  Future<bool> _stopVpnAfterFailedAuthentication() async {
+    _auth?.invalidatePendingRestore();
+    _authenticationFailed = true;
+    _deferredConfigurationCheck = false;
+    _deviceId = null;
+    _hasUsableConfiguration = false;
+    _configurationMessage = 'Войдите в аккаунт снова';
+    _setAvailableNodes(null);
+    await _clearAndroidReconnect();
+    String state;
+    var known = false;
+    try {
+      state = await _vpnStatus().timeout(const Duration(seconds: 3));
+      known = true;
+    } catch (_) {
+      state = _vpnState;
+    }
+    if (state == 'other-vpn') {
+      _vpnState = state;
+      return true;
+    }
+    if (!known || state != 'idle') {
+      if (mounted) setState(() => _startupStatus = 'Отключаем VPN');
+      try {
+        await _stopVpn().timeout(const Duration(seconds: 10));
+        state = await _vpnStatus().timeout(const Duration(seconds: 3));
+      } catch (_) {
+        state = 'error';
+      }
+    }
+    _vpnState = state;
+    if (state == 'idle') {
+      _vpnTransport = null;
+      _vpnCountry = null;
+      _latencyMs = null;
+    }
+    return state == 'idle';
+  }
+
+  Future<void> _resumeRestoredSession(AuthClient auth, int generation) async {
+    String state;
+    var statusKnown = false;
+    try {
+      state = await _vpnStatus().timeout(const Duration(seconds: 3));
+      statusKnown = true;
+    } catch (_) {
+      state = _vpnState;
+    }
+    if (!mounted || generation != _authOperationGeneration) return;
+    final deferConfiguration =
+        auth.vpnAccessStatus == 'approved' &&
+        (!statusKnown ||
+            state == 'connected' ||
+            state == 'connecting' ||
+            state == 'disconnecting');
+    if (deferConfiguration) {
+      _deferredConfigurationCheck = true;
+      _lastConfigurationCheck = DateTime.now();
+      _configurationMessage = 'Проверим конфигурацию после отключения VPN';
+      if (mounted) setState(() {});
+      if (_vpnState == 'idle') unawaited(_runDeferredConfigurationCheck());
+      return;
+    }
+    await _registerDevice(auth);
   }
 
   Future<void> _beginStartup() async {
@@ -469,7 +564,8 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _startupStatus = 'Проверяем обновления');
 
     AppUpdate? update;
-    if (defaultTargetPlatform != TargetPlatform.android || kReleaseMode) {
+    if (!_authenticationFailed &&
+        (defaultTargetPlatform != TargetPlatform.android || kReleaseMode)) {
       final client = http.Client();
       try {
         final package = await PackageInfo.fromPlatform();
@@ -840,7 +936,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _handleQuickAction(String action) async {
     if (!mounted) return;
-    if (_starting || _busy) {
+    if (_starting || _busy || _syncingConfiguration) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
       return _handleQuickAction(action);
     }
@@ -952,11 +1048,13 @@ class _HomeScreenState extends State<HomeScreen> {
     } else if (_selectedTab == 0) {
       _lastConnectionError = null;
       await _refreshVpnState();
-      if (_auth?.signedIn == true) await _checkUpdates();
+      if (!_authenticationFailed && _auth?.signedIn == true) {
+        await _checkUpdates();
+      }
       if (_vpnState == 'connected' && !_measuringLatency) {
         await _measureVpnLatency();
       }
-    } else if (_auth?.signedIn == true) {
+    } else if (!_authenticationFailed && _auth?.signedIn == true) {
       await _checkUpdates();
     }
   }
@@ -987,11 +1085,20 @@ class _HomeScreenState extends State<HomeScreen> {
   };
 
   Future<void> _registerDevice(AuthClient auth) async {
+    if (mounted) setState(() => _syncingConfiguration = true);
     try {
       _deviceId = await auth.ensureDeviceRegistered(_deviceLabel);
       _message = null;
       await _syncConfiguration(auth);
     } on AuthException catch (error) {
+      if (error.message == 'Sign in required' ||
+          error.message == 'Account unavailable') {
+        final stopped = await _stopVpnAfterFailedAuthentication();
+        _message = stopped
+            ? 'Сеанс входа закончился. Войдите в аккаунт снова.'
+            : 'Сеанс входа закончился. Не удалось отключить VPN. Проверьте подключение и войдите снова.';
+        return;
+      }
       _deviceId = null;
       _hasUsableConfiguration = false;
       _message = switch (error.message) {
@@ -1007,6 +1114,44 @@ class _HomeScreenState extends State<HomeScreen> {
       _deviceId = null;
       _hasUsableConfiguration = false;
       _message = 'Не удалось привязать устройство. Войдите через Нону снова.';
+    } finally {
+      if (mounted) {
+        setState(() => _syncingConfiguration = false);
+        if (_deferredConfigurationCheck && _vpnState == 'idle') {
+          unawaited(_runDeferredConfigurationCheck());
+        }
+      }
+    }
+  }
+
+  Future<void> _runDeferredConfigurationCheck() async {
+    if (!_deferredConfigurationCheck ||
+        _syncingConfiguration ||
+        _busy ||
+        _vpnState != 'idle') {
+      return;
+    }
+    final auth = _auth;
+    if (auth == null || !auth.signedIn || _authenticationFailed) return;
+    try {
+      if (await _vpnStatus().timeout(const Duration(seconds: 3)) != 'idle') {
+        return;
+      }
+    } catch (_) {
+      return;
+    }
+    if (!mounted ||
+        !_deferredConfigurationCheck ||
+        _syncingConfiguration ||
+        _busy ||
+        _auth != auth) {
+      return;
+    }
+    _deferredConfigurationCheck = false;
+    if (_deviceId == null) {
+      await _registerDevice(auth);
+    } else {
+      await _checkUpdates();
     }
   }
 
@@ -1067,13 +1212,11 @@ class _HomeScreenState extends State<HomeScreen> {
           (auth.vpnAccessStatus == 'deleting' ||
               error.message == 'Sign in required' ||
               error.message == 'Account unavailable')) {
-        _hasUsableConfiguration = false;
-        _setAvailableNodes(null);
         await vault.clear();
-        await _clearAndroidReconnect();
-        _configurationMessage = auth.vpnAccessStatus == 'deleting'
-            ? 'Аккаунт удалён'
-            : 'Войдите в аккаунт снова';
+        final stopped = await _stopVpnAfterFailedAuthentication();
+        _message = stopped
+            ? 'Сеанс входа закончился. Войдите в аккаунт снова.'
+            : 'Сеанс входа закончился. Не удалось отключить VPN. Проверьте подключение и войдите снова.';
         return;
       }
       try {
@@ -1098,15 +1241,51 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _checkUpdates() async {
     final auth = _auth;
-    if (auth == null || _deviceId == null || _busy) return;
-    setState(() => _busy = true);
+    if (_authenticationFailed ||
+        auth == null ||
+        (_deviceId == null && !_deferredConfigurationCheck) ||
+        _busy ||
+        _syncingConfiguration) {
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _syncingConfiguration = true;
+    });
     try {
-      await _syncConfiguration(auth);
+      if (_deferredConfigurationCheck && _vpnState == 'connected') {
+        _lastConfigurationCheck = DateTime.now();
+        var expired = false;
+        try {
+          await auth.refreshAccountStatus();
+        } on AuthException catch (error) {
+          expired =
+              error.message == 'Sign in required' ||
+              error.message == 'Account unavailable';
+        } catch (_) {
+          // Keep the active VPN if the status server is briefly unavailable.
+        }
+        if (expired ||
+            (auth.vpnAccessStatus != null &&
+                auth.vpnAccessStatus != 'approved')) {
+          await _vault?.clear();
+          final stopped = await _stopVpnAfterFailedAuthentication();
+          _message = stopped ? 'Доступ к аккаунту закончился. Войдите снова.' : 'Доступ к аккаунту закончился. Не удалось отключить VPN. Проверьте подключение и войдите снова.';
+        }
+      } else {
+        _deferredConfigurationCheck = false;
+        await _syncConfiguration(auth);
+      }
     } catch (_) {
       _hasUsableConfiguration = false;
       _configurationMessage = 'Не удалось обновить состояние доступа';
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _syncingConfiguration = false;
+        });
+      }
     }
   }
 
@@ -1127,6 +1306,7 @@ class _HomeScreenState extends State<HomeScreen> {
           state == 'connected') {
         await _syncAndroidPresentation();
       }
+      if (state == 'idle') unawaited(_runDeferredConfigurationCheck());
     } catch (_) {
       if (mounted) setState(() => _vpnState = 'error');
     }
@@ -1450,7 +1630,10 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {
       _message = 'Не удалось остановить VPN';
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _busy = false);
+        if (_vpnState == 'idle') unawaited(_runDeferredConfigurationCheck());
+      }
     }
   }
 
@@ -1502,7 +1685,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _retryDevice() async {
     final auth = _auth;
-    if (auth == null || !auth.signedIn) return;
+    if (auth == null || !auth.signedIn || _authenticationFailed) return;
     setState(() => _busy = true);
     await _registerDevice(auth);
     if (mounted) setState(() => _busy = false);
@@ -1511,13 +1694,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _login() async {
     final auth = _auth;
     if (auth == null) return;
+    var loggedIn = false;
+    _authOperationGeneration++;
+    _deferredConfigurationCheck = false;
     setState(() {
       _busy = true;
       _message = null;
     });
     try {
       await auth.loginWithKeycloak();
-      await _registerDevice(auth);
+      _authenticationFailed = false;
+      loggedIn = true;
     } on AuthException catch (error) {
       if (mounted) {
         setState(
@@ -1538,13 +1725,23 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } finally {
       await _closeAuthenticationWindow();
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          if (loggedIn) _syncingConfiguration = true;
+        });
+      }
     }
+    // Show the main screen while device registration and configuration sync
+    // run, so the status dot can animate for the full operation.
+    if (loggedIn && mounted) unawaited(_registerDevice(auth));
   }
 
   Future<void> _logout() async {
     final auth = _auth;
     if (auth == null) return;
+    _authOperationGeneration++;
+    _deferredConfigurationCheck = false;
     setState(() {
       _busy = true;
       _message = null;
@@ -1712,9 +1909,9 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       });
     }
-    final signedIn = _auth?.signedIn == true;
+    final signedIn = !_authenticationFailed && _auth?.signedIn == true;
     final canConnect = canStartVpn(
-      busy: _busy,
+      busy: _busy || _syncingConfiguration,
       vpnState: _vpnState,
       accessStatus: _auth?.vpnAccessStatus,
       hasConfiguration: _hasUsableConfiguration,
@@ -1722,18 +1919,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final VoidCallback? mainAction;
     final VoidCallback? connectionAction;
     final String actionLabel;
-    if (_vpnControlsAvailable &&
+    if (_authenticationFailed) {
+      connectionAction = _vpnState == 'connected' && !_busy
+          ? _disconnectVpn
+          : null;
+      mainAction = _auth == null || _busy ? null : _login;
+      actionLabel = 'Войти через Нону';
+    } else if (_vpnControlsAvailable &&
         _vpnState != 'idle' &&
         _vpnState != 'other-vpn' &&
         _vpnState != 'blocked') {
-      connectionAction = _busy ? null : _disconnectVpn;
-      mainAction = _vpnState == 'connected' && !_busy && !_measuringLatency
+      connectionAction = _busy || _syncingConfiguration ? null : _disconnectVpn;
+      mainAction =
+          _vpnState == 'connected' &&
+              !_busy &&
+              !_syncingConfiguration &&
+              !_measuringLatency
           ? _measureVpnLatency
           : null;
       actionLabel = _measuringLatency ? 'Проверяем пинг…' : 'Проверить пинг';
     } else if (!signedIn || _deviceId == null) {
       connectionAction = null;
-      mainAction = _auth == null || _busy ? null : _login;
+      mainAction = _auth == null || _busy || _syncingConfiguration
+          ? null
+          : _login;
       actionLabel = 'Войти через Нону';
     } else if (!_vpnControlsAvailable) {
       connectionAction = null;
@@ -1741,7 +1950,9 @@ class _HomeScreenState extends State<HomeScreen> {
       actionLabel = 'VPN пока недоступно';
     } else if (_vpnState == 'blocked') {
       connectionAction = null;
-      mainAction = _busy ? null : () => unawaited(_retryConnection());
+      mainAction = _busy || _syncingConfiguration
+          ? null
+          : () => unawaited(_retryConnection());
       actionLabel = 'Повторить попытку';
     } else {
       connectionAction = canConnect ? _connectVpn : null;
@@ -1760,7 +1971,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ? 'Отключите другой VPN и дождитесь обновления состояния'
         : _vpnState == 'blocked'
         ? _lastConnectionError
-        : _busy
+        : _busy || _syncingConfiguration
         ? 'Подождите завершения действия'
         : !signedIn
         ? 'Войдите через Нону'
@@ -1790,9 +2001,14 @@ class _HomeScreenState extends State<HomeScreen> {
       onAction: mainAction,
       onConnectionTap: connectionAction,
       onRefresh: _refreshCurrentPage,
-      busy: _busy,
+      busy: _busy || _syncingConfiguration,
       measuringLatency: _measuringLatency,
-      onMeasureLatency: _vpnState == 'connected' && !_busy && !_measuringLatency
+      syncingConfiguration: _syncingConfiguration,
+      onMeasureLatency:
+          _vpnState == 'connected' &&
+              !_busy &&
+              !_syncingConfiguration &&
+              !_measuringLatency
           ? _measureVpnLatency
           : null,
       routingAvailable: _vpnControlsAvailable,

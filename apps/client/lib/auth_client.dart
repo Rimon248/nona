@@ -117,6 +117,7 @@ class AuthClient {
   SessionTokens? _tokens;
   String? _oidcAccountId;
   bool _oidcInitialized = false;
+  int _restoreEpoch = 0;
   String? _username;
   String? _vpnAccessStatus;
 
@@ -126,6 +127,15 @@ class AuthClient {
       _oidc == null ? _tokens?.accountId : (signedIn ? _oidcAccountId : null);
   String? get username => _username;
   String? get vpnAccessStatus => _vpnAccessStatus;
+
+  /// Prevents a late restore response from reopening a failed session.
+  void invalidatePendingRestore() {
+    _restoreEpoch++;
+    _tokens = null;
+    _oidcAccountId = null;
+    _username = null;
+    _vpnAccessStatus = null;
+  }
 
   String get _deviceSeedKey {
     final identity = _oidc == null
@@ -156,12 +166,15 @@ class AuthClient {
 
   Future<void> _initOidc() async {
     if (_oidcInitialized) return;
-    await _oidc!.initialize();
+    await _oidc!.initialize().timeout(const Duration(seconds: 10));
     _oidcInitialized = true;
   }
 
-  Future<void> _loadOidcAccount() async {
+  Future<void> _loadOidcAccount({int? restoreEpoch}) async {
     final (status, body) = await _authorizedRequest('GET', '/v1/account');
+    if (restoreEpoch != null && restoreEpoch != _restoreEpoch) {
+      throw const AuthException('Sign in required');
+    }
     if (status == 401) {
       _vpnAccessStatus = 'deleting';
       throw const AuthException('Account unavailable');
@@ -198,6 +211,7 @@ class AuthClient {
 
   Future<void> loginWithKeycloak() async {
     if (_oidc == null) throw const AuthException('Keycloak is not configured');
+    invalidatePendingRestore();
     await _initOidc();
     if (!await _oidc.signIn()) throw const AuthException('Sign in cancelled');
     await _loadOidcAccount();
@@ -270,7 +284,9 @@ class AuthClient {
     int maxResponseBytes = 8192,
   }) async {
     if (_oidc != null) {
-      final access = await _oidc.accessToken();
+      final access = await _oidc.accessToken().timeout(
+        const Duration(seconds: 10),
+      );
       if (access == null) throw const AuthException('Sign in required');
       var response = await _request(
         method,
@@ -280,7 +296,9 @@ class AuthClient {
         maxResponseBytes: maxResponseBytes,
       );
       if (response.$1 == 401) {
-        final fresh = await _oidc.accessToken(forceRefresh: true);
+        final fresh = await _oidc
+            .accessToken(forceRefresh: true)
+            .timeout(const Duration(seconds: 10));
         if (fresh == null) throw const AuthException('Sign in required');
         response = await _request(
           method,
@@ -443,13 +461,16 @@ class AuthClient {
   /// Returns false when there is no usable saved session. Network errors are
   /// surfaced so the UI can distinguish offline state from signed-out state.
   Future<bool> restore() async {
+    final epoch = _restoreEpoch;
     if (_oidc != null) {
       await _initOidc();
+      if (epoch != _restoreEpoch) return false;
       if (!_oidc.hasUser) return false;
-      await _loadOidcAccount();
+      await _loadOidcAccount(restoreEpoch: epoch);
       return true;
     }
     final saved = await _store.read(_refreshKey);
+    if (epoch != _restoreEpoch) return false;
     if (saved == null) return false;
     try {
       final (status, body) = await _request(
@@ -458,11 +479,16 @@ class AuthClient {
         body: {'refresh_token': saved},
       );
       final received = await _readTokens(status, body);
+      if (epoch != _restoreEpoch) return false;
       await _store.write(_refreshKey, received.refreshToken);
+      if (epoch != _restoreEpoch) return false;
+      final username = await _store.read(_usernameKey);
+      if (epoch != _restoreEpoch) return false;
       _tokens = received;
-      _username = await _store.read(_usernameKey);
+      _username = username;
       return true;
     } on AuthException catch (error) {
+      if (epoch != _restoreEpoch) return false;
       if (error.message == 'Invalid credentials') {
         await _store.delete(_refreshKey);
         await _store.delete(_usernameKey);
@@ -477,6 +503,7 @@ class AuthClient {
   /// A failed server request keeps the local session for a later retry. The
   /// app must not claim that server-side access was revoked in that case.
   Future<void> logout() async {
+    _restoreEpoch++;
     if (_oidc != null) {
       await _initOidc();
       await _oidc.revokeRefreshToken();
